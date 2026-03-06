@@ -170,5 +170,262 @@ class SupabaseClient:
             return False
 
 
+    # ==========================================
+    # STOCK MANAGEMENT API METHODS
+    # ==========================================
+
+    def fetch_stocks(self):
+        """Fetches all stocks from the StockManagement table."""
+        headers = self._get_headers()
+        if not headers:
+            return []
+            
+        endpoint = f"{self.url}/rest/v1/StockManagement?select=*"
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error fetching stocks: {e}")
+            return []
+
+    def add_stock(self, symbol, name, is_equity, sector, is_listed=True, market_cap="NA"):
+        """Adds a new stock to the StockManagement table."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/StockManagement"
+        data = {
+            "Symbol": symbol,
+            "Name": name,
+            "Equity": is_equity,
+            "Sector": sector,
+            "Listed": is_listed,
+            "MarketCap": market_cap
+        }
+        
+        try:
+            response = requests.post(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: Row-Level Security (RLS) policy in Supabase blocked this insert. Please enable insert access for 'anon' users in your Supabase 'StockManagement' table settings.")
+            else:
+                st.error(f"Error adding stock: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error adding stock: {e}")
+            return False
+
+    def delete_stock(self, symbol):
+        """Deletes a stock from the StockManagement table."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/StockManagement?Symbol=eq.{symbol}"
+        
+        try:
+            response = requests.delete(endpoint, headers=headers)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: Row-Level Security (RLS) policy in Supabase blocked this deletion.")
+            else:
+                st.error(f"Error deleting stock: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error deleting stock: {e}")
+            return False
+
+
+    # ==========================================
+    # ASSET ALLOCATION API METHODS
+    # ==========================================
+
+    def upsert_stock_allocations(self, updates_list):
+        """
+        Updates the 'Allocation' column for multiple symbols in the StockManagement table.
+        updates_list should be like: [{"Symbol": "RELIANCE", "Allocation": 10.5}, ...]
+        """
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/StockManagement"
+        
+        try:
+            # Supabase doesn't easily do bulk PATCH without a match array that might be complex,
+            # so we'll just loop and PATCH each one. For small portfolios, this is fine.
+            for item in updates_list:
+                sym = item.get("Symbol")
+                alloc = item.get("Allocation")
+                if sym:
+                    patch_url = f"{endpoint}?Symbol=eq.{sym}"
+                    res = requests.patch(patch_url, headers=headers, json={"Allocation": alloc})
+                    res.raise_for_status()
+            
+            return True
+            
+        except requests.exceptions.HTTPError as e:
+            if res.status_code == 401 or res.status_code == 403:
+                st.error("Error: Row-Level Security (RLS) policy in Supabase blocked this update.")
+            else:
+                st.error(f"Error saving stock allocations: HTTP {res.status_code} - {res.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error saving stock allocations: {e}")
+            return False
+
+
+    # ==========================================
+    # TRANSACTIONS API METHODS
+    # ==========================================
+
+    def fetch_open_transactions(self):
+        """Fetches all open transactions where SellAvg is null."""
+        headers = self._get_headers()
+        if not headers:
+            return []
+            
+        endpoint = f"{self.url}/rest/v1/Transactions?SellAvg=is.null&select=*"
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error fetching open transactions: {e}")
+            return []
+
+    def fetch_transactions_by_symbol(self, symbol):
+        """Fetches all transactions for a specific symbol."""
+        headers = self._get_headers()
+        if not headers:
+            return []
+            
+        endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{symbol}&order=BuyDate.asc"
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error fetching transactions for {symbol}: {e}")
+            return []
+
+    def add_buy_transaction(self, symbol, quantity, price, date):
+        """Adds a new recorded BUY transaction to the Transactions table."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/Transactions"
+        data = {
+            "Symbol": symbol,
+            "Qty": quantity,
+            "BuyAvg": price,
+            "BuyDate": date
+            # SellDate and SellAvg remain null automatically
+        }
+        
+        try:
+            response = requests.post(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: RLS policy blocked this insert in Transactions.")
+            else:
+                st.error(f"Error adding buy transaction: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error adding buy transaction: {e}")
+            return False
+
+    def process_sell_transaction(self, symbol, sell_qty, sell_avg, sell_date):
+        """Processes a SELL by matching it against open BUYS (FIFO)."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        # 1. Fetch all OPEN transactions for this symbol (SellDate is null) ordered by BuyDate (FIFO)
+        endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{symbol}&SellDate=is.null&order=BuyDate.asc"
+        
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            open_rows = response.json()
+            
+            if not open_rows:
+                st.error(f"No open Buy transactions found for {symbol} to sell against!")
+                return False
+                
+            remaining_to_sell = float(sell_qty)
+            
+            # Count total available to prevent partial failure midway if insufficient qty
+            total_available = sum([float(r.get("Qty", 0)) for r in open_rows])
+            if remaining_to_sell > total_available:
+                st.error(f"Insufficient open quantity to sell. You are trying to sell {remaining_to_sell}, but only have {total_available} open.")
+                return False
+                
+            base_endpoint = f"{self.url}/rest/v1/Transactions"
+            
+            # 2. Iterate and apply FIFO
+            for row in open_rows:
+                if remaining_to_sell <= 0:
+                    break
+                    
+                row_id = row.get("id")
+                row_qty = float(row.get("Qty", 0))
+                
+                if remaining_to_sell >= row_qty:
+                    # Fully consume this row
+                    patch_url = f"{base_endpoint}?id=eq.{row_id}"
+                    patch_data = {
+                        "SellDate": sell_date,
+                        "SellAvg": sell_avg
+                    }
+                    p_res = requests.patch(patch_url, headers=headers, json=patch_data)
+                    p_res.raise_for_status()
+                    
+                    remaining_to_sell -= row_qty
+                else:
+                    # Partial consume (Split the row)
+                    
+                    # A. Patch the original row to reduce its Qty (keeping it OPEN)
+                    new_open_qty = row_qty - remaining_to_sell
+                    patch_url = f"{base_endpoint}?id=eq.{row_id}"
+                    p_res = requests.patch(patch_url, headers=headers, json={"Qty": new_open_qty})
+                    p_res.raise_for_status()
+                    
+                    # B. Post a new row for the SOLD portion
+                    post_data = {
+                        "Symbol": symbol,
+                        "BuyDate": row.get("BuyDate"),
+                        "BuyAvg": row.get("BuyAvg"),
+                        "SellDate": sell_date,
+                        "SellAvg": sell_avg,
+                        "Qty": remaining_to_sell
+                    }
+                    n_res = requests.post(base_endpoint, headers=headers, json=post_data)
+                    n_res.raise_for_status()
+                    
+                    remaining_to_sell = 0
+                    
+            return True
+            
+        except requests.exceptions.HTTPError as e:
+            if hasattr(e, 'response') and e.response is not None:
+                st.error(f"Error processing sell transaction: HTTP {e.response.status_code} - {e.response.text}")
+            else:
+                 st.error(f"Error processing sell transaction: {e}")
+            return False
+        except Exception as e:
+            st.error(f"Error processing sell transaction: {e}")
+            return False
+
+
 # Create a singleton instance that can be imported across the app
 db = SupabaseClient()
