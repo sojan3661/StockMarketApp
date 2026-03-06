@@ -73,6 +73,7 @@ with st.spinner("Loading data..."):
     db_sectors = db.fetch_sectors()
     db_allocations = db.fetch_allocations()
     db_stocks = db.fetch_stocks()
+    db_stock_allocations = db.fetch_stock_allocations()
     open_transactions = db.fetch_open_transactions()
     db_investment_plan = db.fetch_investment_plan()
 
@@ -110,203 +111,168 @@ sector_alloc_dict = {
 # -----------------------------
 total_expected = 0
 
-if db_investment_plan:
-
-    current_invested = db_investment_plan.get("Current Invested Amount", 0)
-
-    monthly_sip = db_investment_plan.get("Monthly SIP") or 0
-
-    months = db_investment_plan.get("Number of Months") or 0
-
-    total_expected = current_invested + (monthly_sip * months)
-
-
-# -----------------------------
-# Header
-# -----------------------------
-col1, col2 = st.columns([3,1])
-
-with col1:
-    st.subheader("Asset Allocation by Sector")
-
-with col2:
-    st.metric("Total Expected Investment", f"₹{total_expected:,.2f}")
-
-
-if not db_sectors:
-    st.info("No sectors found!")
+if not db_investment_plan:
+    st.info("No investment plans found!")
     st.stop()
 
+# Support list of plans vs single plan
+plans_list = db_investment_plan if isinstance(db_investment_plan, list) else [db_investment_plan]
+portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
+
+if not portfolio_names:
+    st.info("No valid portfolios found.")
+    st.stop()
 
 # -----------------------------
-# Main Form
+# Tabs Generation 
 # -----------------------------
-with st.form("portfolio_allocations_form"):
+tabs = st.tabs(portfolio_names)
 
-    master_updates = []
+for i, port_name in enumerate(portfolio_names):
+    
+    with tabs[i]:
+        
+        # 1. Filter allocations for this specific portfolio
+        port_allocations = [a for a in db_allocations if a.get("Portfolio") == port_name]
+        sector_alloc_dict = {
+            alloc["Sector"]: alloc["Allocation"]
+            for alloc in port_allocations
+            if alloc.get("Sector")
+        }
+        
+        # 1b. Filter stock targets for this specific portfolio
+        port_stock_allocations = {
+            a["Symbol"]: a["Allocation"]
+            for a in db_stock_allocations
+            if a.get("Portfolio") == port_name and a.get("Symbol")
+        }
+        
+        # 2. Calculate Expected Investment for this specific portfolio
+        plan_details = next((p for p in plans_list if p.get("Portfolio") == port_name), {})
+        current_invested = plan_details.get("Current Invested Amount", 0)
+        monthly_sip = plan_details.get("Monthly SIP") or 0
+        months = plan_details.get("Number of Months") or 0
+        total_expected = current_invested + (monthly_sip * months)
+        
+        # 3. Header
+        col1, col2 = st.columns([3,1])
+        with col1:
+            st.subheader(f"Asset Allocation for {port_name}")
+        with col2:
+            st.metric("Expected Investment", f"₹{total_expected:,.2f}")
+            
+            
+        if not db_sectors:
+            st.info("No sectors found!")
+            continue
 
-    for sector_row in db_sectors:
-
-        sector_name = sector_row.get("Sector")
-
-        target_alloc = sector_alloc_dict.get(sector_name, 0)
-
-        sector_expected = total_expected * (target_alloc / 100)
-
-        with st.expander(
-            f"📁 {sector_name} "
-            f"(Target Sector Allocation: {target_alloc}%) "
-            f"- Expected ₹{sector_expected:,.2f}",
-            expanded=True
-        ):
-
-            sector_stocks = [
-                s for s in db_stocks
-                if s.get("Sector") == sector_name
-            ]
-
-            if not sector_stocks:
-                st.info("No assets in this sector")
-                continue
-
-
-            rows = []
-
-            for p in sector_stocks:
-
-                sym = p.get("Symbol")
-                name = p.get("Name")
-
-                alloc = float(p.get("Allocation") or 0)
-
-                agg = tx_agg.get(sym, {"Qty":0,"InvestedTotal":0})
-
-                qty = agg["Qty"]
-
-                invested = agg["InvestedTotal"]
-
-
-                # Price
-                if p.get("Equity", True):
-
-                    price = get_stock_price(sym)
-
+        with st.form(f"alloc_form_{port_name}"):
+            
+            master_updates = []
+            
+            for sector_row in db_sectors:
+                
+                sector_name = sector_row.get("Sector")
+                target_alloc = sector_alloc_dict.get(sector_name, 0)
+                sector_expected = total_expected * (target_alloc / 100)
+                
+                with st.expander(
+                    f"📁 {sector_name} (Target Sector Allocation: {target_alloc}%) - Expected ₹{sector_expected:,.2f}",
+                    expanded=True
+                ):
+                    
+                    sector_stocks = [s for s in db_stocks if s.get("Sector") == sector_name]
+                    
+                    if not sector_stocks:
+                        st.info("No assets in this sector")
+                        continue
+                        
+                    rows = []
+                    
+                    for p in sector_stocks:
+                        sym = p.get("Symbol")
+                        name = p.get("Name")
+                        
+                        alloc = float(port_stock_allocations.get(sym, 0.0))
+                        
+                        agg = tx_agg.get(sym, {"Qty":0,"InvestedTotal":0})
+                        qty = agg["Qty"]
+                        invested = agg["InvestedTotal"]
+                        
+                        # Price
+                        if p.get("Equity", True):
+                            price = get_stock_price(sym)
+                        else:
+                            price = get_nav(nav_df, name)
+                            
+                        # Asset target expected = Total * Sector % * Asset %
+                        expected = total_expected * (target_alloc/100) * (alloc/100)
+                        inflow = max(0, expected - invested)
+                        buy = math.ceil(inflow/price) if price > 0 else 0
+                        
+                        rows.append({
+                            "Symbol": sym,
+                            "Name": name,
+                            "LTP": price,
+                            "Qty": qty,
+                            "Invested": invested,
+                            "Allocation %": alloc,
+                            "Expected": expected,
+                            "Inflow": inflow,
+                            "Buy": buy
+                        })
+                        
+                    df = pd.DataFrame(rows)
+                    
+                    edited_df = st.data_editor(
+                        df,
+                        key=f"editor_{port_name}_{sector_name}", # Need composite key to avoid conflicts across tabs
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "Name": None,   # Hidden — used internally for MF save fallback
+                            "Allocation %": st.column_config.NumberColumn(
+                                "Allocation %",
+                                min_value=0.0,
+                                max_value=100.0,
+                                step=0.5
+                            ),
+                            "LTP": st.column_config.NumberColumn(format="₹%.2f"),
+                            "Invested": st.column_config.NumberColumn(format="₹%.2f"),
+                            "Expected": st.column_config.NumberColumn(format="₹%.2f"),
+                            "Inflow": st.column_config.NumberColumn(format="₹%.2f"),
+                        },
+                        disabled=[
+                            "Symbol", "Name", "LTP", "Qty", "Invested", "Expected", "Inflow", "Buy"
+                        ]
+                    )
+                    
+                    # Allocation validation
+                    sector_sum = edited_df["Allocation %"].sum()
+                    if sector_sum > 100:
+                        st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
+                    else:
+                        st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
+                        
+                    updates = edited_df[["Symbol", "Name", "Allocation %"]].rename(
+                        columns={"Allocation %": "Allocation"}
+                    )
+                    master_updates.extend(updates.to_dict("records"))
+            
+            st.divider()
+            submitted = st.form_submit_button(
+                f"💾 Save {port_name} Asset Allocations",
+                type="primary",
+                use_container_width=True
+            )
+            
+            if submitted:
+                with st.spinner("Saving allocations..."):
+                    success = db.upsert_stock_allocations(master_updates, port_name)
+                    
+                if success:
+                    st.success("🎉 Allocations saved successfully!")
+                    st.cache_data.clear()
+                    st.rerun()
                 else:
-
-                    price = get_nav(nav_df, name)
-
-
-                expected = total_expected * (target_alloc/100) * (alloc/100)
-
-                inflow = max(0, expected - invested)
-
-                buy = math.ceil(inflow/price) if price > 0 else 0
-
-
-                rows.append({
-
-                    "Symbol": sym,
-                    "Name": name,
-                    "LTP": price,
-                    "Qty": qty,
-                    "Invested": invested,
-                    "Allocation %": alloc,
-                    "Expected": expected,
-                    "Inflow": inflow,
-                    "Buy": buy
-
-                })
-
-
-            df = pd.DataFrame(rows)
-
-
-            edited_df = st.data_editor(
-
-                df,
-
-                hide_index=True,
-
-                use_container_width=True,
-
-                column_config={
-
-                    "Name": None,   # Hidden — used internally for MF save fallback
-
-                    "Allocation %": st.column_config.NumberColumn(
-
-                        "Allocation %",
-
-                        min_value=0.0,
-                        max_value=100.0,
-                        step=0.5
-
-                    ),
-
-                    "LTP": st.column_config.NumberColumn(format="₹%.2f"),
-                    "Invested": st.column_config.NumberColumn(format="₹%.2f"),
-                    "Expected": st.column_config.NumberColumn(format="₹%.2f"),
-                    "Inflow": st.column_config.NumberColumn(format="₹%.2f"),
-
-                },
-
-                disabled=[
-                    "Symbol",
-                    "Name",
-                    "LTP",
-                    "Qty",
-                    "Invested",
-                    "Expected",
-                    "Inflow",
-                    "Buy"
-                    # "Allocation %" is editable — intentionally excluded from disabled list
-                ]
-
-            )
-
-
-            # Allocation validation
-            sector_sum = edited_df["Allocation %"].sum()
-
-            if sector_sum > 100:
-                st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
-            else:
-                st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
-
-
-            updates = edited_df[["Symbol", "Name", "Allocation %"]].rename(
-
-                columns={"Allocation %": "Allocation"}
-
-            )
-
-            master_updates.extend(updates.to_dict("records"))
-
-
-    st.divider()
-
-    submitted = st.form_submit_button(
-        "💾 Save All Asset Allocations",
-        type="primary",
-        use_container_width=True
-    )
-
-
-# -----------------------------
-# Save Updates
-# -----------------------------
-if submitted:
-
-    with st.spinner("Saving allocations..."):
-
-        success = db.upsert_stock_allocations(master_updates)
-
-    if success:
-
-        st.success("🎉 Allocations saved successfully!")
-        st.cache_data.clear()   # Bust cached DB + NAV data
-        st.rerun()              # Reload page with fresh data from DB
-
-    else:
-
-        st.error("Error saving allocations")
+                    st.error("Error saving allocations")

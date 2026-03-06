@@ -1,6 +1,8 @@
 import streamlit as st
 import sys
 import os
+import io
+import openpyxl
 
 # Add the app root directory to Python path to allow imports from Config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -22,6 +24,85 @@ with st.spinner("Loading sectors..."):
 
 # Given there's only one column 'Sector', we extract those directly
 existing_names = [s.get('Sector', '').lower() for s in sectors_data]
+
+# ==================== Bulk Upload & Template ====================
+def generate_sector_template() -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sectors"
+
+    # Headers
+    ws.append(["Sector"])
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+st.subheader("Bulk Import Sectors")
+col_dl, col_ul = st.columns([1, 1])
+
+with col_dl:
+    st.download_button(
+        label="📥 Download Sector Template",
+        data=generate_sector_template(),
+        file_name="sector_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+with col_ul:
+    uploaded_sector_file = st.file_uploader(
+        "Upload Sectors",
+        type=["xlsx"],
+        label_visibility="collapsed"
+    )
+
+if uploaded_sector_file is not None:
+    with st.expander("📋 Preview & Import Uploaded Sectors", expanded=True):
+        try:
+            import pandas as pd
+            upload_df = pd.read_excel(uploaded_sector_file, dtype=str)
+            upload_df.columns = [c.strip() for c in upload_df.columns]
+            
+            if "Sector" not in upload_df.columns:
+                st.error("Missing column in file: Sector")
+            else:
+                st.dataframe(upload_df, use_container_width=True, hide_index=True)
+                
+                if st.button("🚀 Import All Sectors", type="primary"):
+                    success_count = 0
+                    fail_count = 0
+                    
+                    for i, row in upload_df.iterrows():
+                        sec_name = str(row.get("Sector", "")).strip()
+                        
+                        if not sec_name or pd.isna(sec_name) or sec_name.lower() == "nan":
+                            st.warning(f"Row {i+2}: Missing Sector name — skipped.")
+                            fail_count += 1
+                            continue
+                            
+                        # Prevent duplicates
+                        if sec_name.lower() in existing_names:
+                            st.warning(f"Row {i+2}: Sector '{sec_name}' already exists — skipped.")
+                            fail_count += 1
+                            continue
+                        
+                        ok = db.add_sector(sec_name)
+                        if ok:
+                            success_count += 1
+                            existing_names.append(sec_name.lower()) # local cache update
+                        else:
+                            fail_count += 1
+                            
+                    if success_count:
+                        st.success(f"✅ {success_count} sector(s) imported successfully.")
+                    if fail_count:
+                        st.error(f"❌ {fail_count} sector(s) failed — see errors/warnings above.")
+                        
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
+st.divider()
 
 # ==================== Add a New Sector ====================
 st.subheader("Add a New Sector")

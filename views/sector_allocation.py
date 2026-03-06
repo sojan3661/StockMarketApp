@@ -16,99 +16,123 @@ if not db.is_configured():
     st.info("Please set your credentials directly inside the init method of `Config/supabase_client.py`.")
     st.stop()
     
-with st.spinner("Loading sector allocations..."):
+with st.spinner("Loading data..."):
     sectors_data = db.fetch_sectors()
-    allocations_data = db.fetch_allocations()
+    investment_plans = db.fetch_investment_plan()
 
-# Create lookup dict for existing allocations { 'Technology': {'Id': 1, 'Allocation': 25.5} }
-alloc_dict = {}
+if not sectors_data:
+    st.info("No sectors found! Please add sectors in the Sector Management page first.")
+    st.stop()
+
+if not investment_plans:
+    st.info("No investment plans found! Please create a portfolio on the Build Portfolio page first.")
+    st.stop()
+    
+# Convert investment plans into a list of portfolio names
+portfolio_names = [plan["Portfolio"] for plan in investment_plans if "Portfolio" in plan]
+
+if not portfolio_names:
+    st.info("No valid portfolios found.")
+    st.stop()
+
+# Load all allocations for all portfolios upfront to minimize queries
+# (Alternative is querying inside each tab, but fetching all at once is faster)
+allocations_data = db.fetch_allocations()
+
+# Create lookup dict: { 'Retirement': { 'Technology': {'Id': 1, 'Allocation': 25.5} } }
+alloc_dict = {p: {} for p in portfolio_names}
 for alloc in allocations_data:
+    port_name = alloc.get("Portfolio")
     sector_name = alloc.get("Sector")
-    if sector_name:
-        alloc_dict[sector_name] = {
+    if port_name in alloc_dict and sector_name:
+        alloc_dict[port_name][sector_name] = {
             "Id": alloc.get("Id"),
             "Allocation": alloc.get("Allocation", 0.0)
         }
 
-# Merge all sectors with their allocations
-merged_data = []
-for sec in sectors_data:
-    sector_name = sec.get("Sector")
-    if not sector_name:
-        continue
-        
-    existing = alloc_dict.get(sector_name)
-    if existing:
-        merged_data.append({
-            "Id": existing["Id"],
-            "Sector": sector_name,
-            "Allocation": float(existing["Allocation"])
-        })
-    else:
-        merged_data.append({
-            "Id": None,
-            "Sector": sector_name,
-            "Allocation": 0.0
-        })
-
-if not merged_data:
-    st.info("No sectors found! Please add sectors in the Sector Management page first.")
-    st.stop()
-
 st.subheader("Edit Allocations")
 
-df = pd.DataFrame(merged_data)
+# Create a tab for each portfolio
+tabs = st.tabs(portfolio_names)
 
-# We don't use a form here because we want the Total Allocation sum to update in real-time
-# Streamlit data_editor will refresh the script on edit, but it won't hit the DB until "Save" is clicked.
-edited_df = st.data_editor(
-    df,
-    hide_index=True,
-    column_config={
-        "Id": None,
-        "Sector": st.column_config.TextColumn("Sector / Theme", disabled=True),
-        "Allocation": st.column_config.NumberColumn("Allocation %", min_value=0.0, max_value=100.0, step=1.0, format="%.2f%%")
-    },
-    use_container_width=True
-)
+# Dictionary to store the edited dataframe for each portfolio
+edited_dfs = {}
 
-st.divider()
-
-# Calculate total allocation dynamically
-total_allocation = edited_df["Allocation"].sum()
-
-col1, col2 = st.columns([3, 1])
-with col1:
-    if total_allocation > 100.0:
-        st.error(f"Total Allocation is {total_allocation:.2f}%. It should not exceed 100%.")
-    elif total_allocation < 100.0:
-        st.warning(f"Total Allocation is {total_allocation:.2f}%. You still have {100.0 - total_allocation:.2f}% to allocate.")
-    else:
-        st.success(f"Total Allocation is perfectly {total_allocation:.2f}%!")
+for i, port_name in enumerate(portfolio_names):
+    with tabs[i]:
+        st.write(f"**Target Allocations for {port_name}**")
         
-with col2:
-    # Save button triggers the DB logic independently of the grid edits
-    submitted = st.button("Save Allocations", type="primary", use_container_width=True)
-
-if submitted:
-    # Convert dataframe back to a list of dicts for the API
-    payload = []
-    
-    for index, row in edited_df.iterrows():
-        record = {
-            "Sector": row["Sector"],
-            "Allocation": float(row["Allocation"])
-        }
+        # Merge all sectors with their allocations for this specific portfolio
+        merged_data = []
+        for sec in sectors_data:
+            sector_name = sec.get("Sector")
+            if not sector_name:
+                continue
+                
+            existing = alloc_dict[port_name].get(sector_name)
+            if existing:
+                merged_data.append({
+                    "Id": existing["Id"],
+                    "Sector": sector_name,
+                    "Allocation": float(existing["Allocation"])
+                })
+            else:
+                merged_data.append({
+                    "Id": None,
+                    "Sector": sector_name,
+                    "Allocation": 0.0
+                })
         
-        # Only include ID in the payload if it actually exists
-        if pd.notna(row["Id"]):
-            record["Id"] = int(row["Id"]) 
+        df = pd.DataFrame(merged_data)
+        
+        # Unique key for each data editor based on portfolio name
+        edited_df = st.data_editor(
+            df,
+            key=f"editor_{port_name}",
+            hide_index=True,
+            column_config={
+                "Id": None,
+                "Sector": st.column_config.TextColumn("Sector / Theme", disabled=True),
+                "Allocation": st.column_config.NumberColumn("Allocation %", min_value=0.0, max_value=100.0, step=1.0, format="%.2f%%")
+            },
+            use_container_width=True
+        )
+        
+        edited_dfs[port_name] = edited_df
+        
+        # Calculate total allocation dynamically for this tab
+        total_allocation = edited_df["Allocation"].sum()
+        
+        if total_allocation > 100.0:
+            st.error(f"Total Allocation is {total_allocation:.2f}%. It should not exceed 100%.")
+        elif total_allocation < 100.0:
+            st.warning(f"Total Allocation is {total_allocation:.2f}%. You still have {100.0 - total_allocation:.2f}% to allocate.")
+        else:
+            st.success(f"Total Allocation is perfectly {total_allocation:.2f}%!")
             
-        payload.append(record)
+        # Display save button for this specific portfolio
+        # Using a unique key for the button
+        submitted = st.button(f"Save {port_name} Allocations", type="primary", use_container_width=True, key=f"save_{port_name}")
         
-    with st.spinner("Saving to database..."):
-        success = db.upsert_allocations(payload)
-        
-    if success:
-        st.success("Allocations successfully saved!")
-        st.rerun()
+        if submitted:
+            # Prepare payload for this exact portfolio
+            payload = []
+            
+            for index, row in edited_df.iterrows():
+                record = {
+                    "Sector": row["Sector"],
+                    "Allocation": float(row["Allocation"]),
+                    "Portfolio": port_name
+                }
+                
+                # We can't safely reuse Ids when switching arrays like this without careful merging.
+                # However, our supabase_client logic drops based on Portfolio + Sector, so omitting Id is fine.
+                
+                payload.append(record)
+                
+            with st.spinner(f"Saving {port_name} to database..."):
+                success = db.upsert_allocations(payload, portfolio=port_name)
+                
+            if success:
+                st.success(f"Allocations for {port_name} successfully saved!")
+                st.rerun()
