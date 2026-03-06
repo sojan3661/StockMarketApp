@@ -252,32 +252,43 @@ class SupabaseClient:
         updates_list should be like: [{"Symbol": "RELIANCE", "Allocation": 10.5}, ...]
         """
         headers = self._get_headers()
+
         if not headers:
             return False
-            
+
         endpoint = f"{self.url}/rest/v1/StockManagement"
-        
+
         try:
-            # Supabase doesn't easily do bulk PATCH without a match array that might be complex,
-            # so we'll just loop and PATCH each one. For small portfolios, this is fine.
+
             for item in updates_list:
+
                 sym = item.get("Symbol")
                 alloc = item.get("Allocation")
-                if sym:
-                    patch_url = f"{endpoint}?Symbol=eq.{sym}"
-                    res = requests.patch(patch_url, headers=headers, json={"Allocation": alloc})
-                    res.raise_for_status()
-            
+
+                if sym is None:
+                    continue
+
+                patch_url = f"{endpoint}?Symbol=eq.{sym}"
+
+                payload = {
+                    "Allocation": float(alloc)
+                }
+
+                res = requests.patch(
+                    patch_url,
+                    headers=headers,
+                    json=payload
+                )
+
+                # Debug if needed
+                if res.status_code not in [200, 204]:
+                    st.error(f"Failed update for {sym}: {res.text}")
+                    return False
+
             return True
-            
-        except requests.exceptions.HTTPError as e:
-            if res.status_code == 401 or res.status_code == 403:
-                st.error("Error: Row-Level Security (RLS) policy in Supabase blocked this update.")
-            else:
-                st.error(f"Error saving stock allocations: HTTP {res.status_code} - {res.text}")
-            return False
+
         except Exception as e:
-            st.error(f"Error saving stock allocations: {e}")
+            st.error(f"Error saving allocations: {e}")
             return False
 
 
@@ -424,6 +435,65 @@ class SupabaseClient:
             return False
         except Exception as e:
             st.error(f"Error processing sell transaction: {e}")
+            return False
+
+
+    # ==========================================
+    # INVESTMENT PLAN API METHODS
+    # ==========================================
+
+    def fetch_investment_plan(self):
+        """Fetches the investment plan. Since there's only one record, returns the first one or None."""
+        headers = self._get_headers()
+        if not headers:
+            return None
+            
+        endpoint = f"{self.url}/rest/v1/Investment%20Plan?select=*"
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            return data[0] if data else None
+        except Exception as e:
+            st.error(f"Error fetching investment plan: {e}")
+            return None
+
+    def upsert_investment_plan(self, current_invested, monthly_sip, num_months):
+        """Upserts the investment plan. If exists, updates; else inserts."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        # First, try to fetch existing
+        existing = self.fetch_investment_plan()
+        
+        endpoint = f"{self.url}/rest/v1/Investment%20Plan"
+        
+        data = {
+            "Current Invested Amount": current_invested,
+            "Monthly SIP": monthly_sip,
+            "Number of Months": num_months
+        }
+        
+        try:
+            if existing:
+                # Update
+                patch_url = f"{endpoint}?id=eq.{existing['id']}"
+                response = requests.patch(patch_url, headers=headers, json=data)
+            else:
+                # Insert
+                response = requests.post(endpoint, headers=headers, json=data)
+            
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: RLS policy blocked this action on Investment Plan.")
+            else:
+                st.error(f"Error saving investment plan: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error saving investment plan: {e}")
             return False
 
 

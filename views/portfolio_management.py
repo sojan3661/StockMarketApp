@@ -2,150 +2,306 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
+import math
+from nsepython import nse_eq
 
-# Add the app root directory to Python path to allow imports from Config
+# Add root path for Config import
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from Config.supabase_client import db
 
-st.title("Portfolio Management")
+
+st.title("Portfolio Rebalancing")
 st.write("Assign target allocations (percentages) to the specific stocks within each sector.")
 
-# Verification check for credentials
+# -----------------------------
+# Supabase Check
+# -----------------------------
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
-    st.info("Please set your credentials directly inside the init method of `Config/supabase_client.py`.")
     st.stop()
-    
-with st.spinner("Loading stock data..."):
+
+
+# -----------------------------
+# Load Mutual Fund NAV (cached)
+# -----------------------------
+@st.cache_data(ttl=3600)
+def load_nav_data():
+    nav_df = pd.read_csv(
+        "https://www.amfiindia.com/spages/NAVAll.txt",
+        sep=";",
+        header=None,
+        names=[
+            "scheme_code",
+            "isin1",
+            "isin2",
+            "scheme_name",
+            "nav",
+            "date"
+        ],
+        on_bad_lines="skip"
+    )
+    return nav_df
+
+
+# -----------------------------
+# Cache NSE Price
+# -----------------------------
+@st.cache_data(ttl=600)
+def get_stock_price(symbol):
+    try:
+        data = nse_eq(symbol)
+        return data["priceInfo"]["lastPrice"]
+    except:
+        return 0
+
+
+# -----------------------------
+# Get MF NAV
+# -----------------------------
+def get_nav(nav_df, fund_name):
+    res = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav"]]
+    if not res.empty:
+        return float(res.iloc[0]["nav"])
+    return 0
+
+
+# -----------------------------
+# Load Database Data
+# -----------------------------
+with st.spinner("Loading data..."):
     db_sectors = db.fetch_sectors()
     db_allocations = db.fetch_allocations()
     db_stocks = db.fetch_stocks()
     open_transactions = db.fetch_open_transactions()
+    db_investment_plan = db.fetch_investment_plan()
 
-# Calculate Qty and Invested Amount for each stock from open transactions
-tx_agg = {}
-for tx in open_transactions:
-    sym = tx.get("Symbol", "")
-    if not sym:
-        continue
-    
-    qty = float(tx.get("Qty", 0.0))
-    buy_avg = float(tx.get("BuyAvg", 0.0))
-    
-    if sym not in tx_agg:
-        tx_agg[sym] = {"Qty": 0.0, "InvestedTotal": 0.0}
-        
-    tx_agg[sym]["Qty"] += qty
-    tx_agg[sym]["InvestedTotal"] += (buy_avg * qty)
+nav_df = load_nav_data()
 
-# Quick dictionary for sector target allocations { 'Technology': 25.0 }
-sector_alloc_dict = {alloc["Sector"]: alloc["Allocation"] for alloc in db_allocations if alloc.get("Sector")}
+# -----------------------------
+# Aggregate Transactions
+# -----------------------------
+tx_df = pd.DataFrame(open_transactions)
 
-st.subheader("Asset Allocation by Sector")
+if not tx_df.empty:
+    tx_df["InvestedTotal"] = tx_df["Qty"] * tx_df["BuyAvg"]
+
+    tx_agg = (
+        tx_df.groupby("Symbol")
+        .agg({"Qty": "sum", "InvestedTotal": "sum"})
+        .to_dict("index")
+    )
+else:
+    tx_agg = {}
+
+
+# -----------------------------
+# Sector Allocation Dict
+# -----------------------------
+sector_alloc_dict = {
+    alloc["Sector"]: alloc["Allocation"]
+    for alloc in db_allocations
+    if alloc.get("Sector")
+}
+
+
+# -----------------------------
+# Expected Investment
+# -----------------------------
+total_expected = 0
+
+if db_investment_plan:
+
+    current_invested = db_investment_plan.get("Current Invested Amount", 0)
+
+    monthly_sip = db_investment_plan.get("Monthly SIP") or 0
+
+    months = db_investment_plan.get("Number of Months") or 0
+
+    total_expected = current_invested + (monthly_sip * months)
+
+
+# -----------------------------
+# Header
+# -----------------------------
+col1, col2 = st.columns([3,1])
+
+with col1:
+    st.subheader("Asset Allocation by Sector")
+
+with col2:
+    st.metric("Total Expected Investment", f"₹{total_expected:,.2f}")
+
 
 if not db_sectors:
-    st.info("No sectors found! Please add sectors in the Sector Management page first.")
+    st.info("No sectors found!")
     st.stop()
 
-# Track all edited dataframes in session state or simply via a dictionary
-edited_dfs = {}
 
+# -----------------------------
+# Main Form
+# -----------------------------
 with st.form("portfolio_allocations_form"):
-    # Process each sector and create an expander/container
+
+    master_updates = []
+
     for sector_row in db_sectors:
-        sector_name = sector_row.get("Sector", "")
-        if not sector_name:
-            continue
-            
-        target_alloc = sector_alloc_dict.get(sector_name, 0.0)
-        
-        with st.expander(f"📁 {sector_name} (Target Sector Allocation: {target_alloc}%)", expanded=True):
-            
-            # Filter existing stocks for THIS sector
-            sector_stocks = [item for item in db_stocks if item.get("Sector") == sector_name]
-            
+
+        sector_name = sector_row.get("Sector")
+
+        target_alloc = sector_alloc_dict.get(sector_name, 0)
+
+        sector_expected = total_expected * (target_alloc / 100)
+
+        with st.expander(
+            f"📁 {sector_name} "
+            f"(Target Sector Allocation: {target_alloc}%) "
+            f"- Expected ₹{sector_expected:,.2f}",
+            expanded=True
+        ):
+
+            sector_stocks = [
+                s for s in db_stocks
+                if s.get("Sector") == sector_name
+            ]
+
             if not sector_stocks:
-                st.info(f"No assets assigned to {sector_name} yet. Go to 'Stock Management' to add some.")
+                st.info("No assets in this sector")
                 continue
-            
-            # Prepare the dataframe for the data editor
-            display_data = []
+
+
+            rows = []
+
             for p in sector_stocks:
-                alloc_val = p.get("Allocation")
-                display_data.append({
-                    "Symbol": p.get("Symbol", "Unknown"),
-                    "Name": p.get("Name", "Unknown"),
-                    "Allocation": float(alloc_val) if alloc_val is not None else 0.0
+
+                sym = p.get("Symbol")
+                name = p.get("Name")
+
+                alloc = float(p.get("Allocation") or 0)
+
+                agg = tx_agg.get(sym, {"Qty":0,"InvestedTotal":0})
+
+                qty = agg["Qty"]
+
+                invested = agg["InvestedTotal"]
+
+
+                # Price
+                if p.get("Equity", True):
+
+                    price = get_stock_price(sym)
+
+                else:
+
+                    price = get_nav(nav_df, name)
+
+
+                expected = total_expected * (target_alloc/100) * (alloc/100)
+
+                inflow = max(0, expected - invested)
+
+                buy = math.ceil(inflow/price) if price > 0 else 0
+
+
+                rows.append({
+
+                    "Symbol": sym,
+                    "Name": name,
+                    "LTP": price,
+                    "Qty": qty,
+                    "Invested": invested,
+                    "Allocation %": alloc,
+                    "Expected": expected,
+                    "Inflow": inflow,
+                    "Buy": buy
+
                 })
-                
-            df = pd.DataFrame(display_data)
 
-            st.caption(f"Set the allocation % for the assets in {sector_name}:")
-            
-            # Keep track of the inputs for this sector
-            if sector_name not in edited_dfs:
-                edited_dfs[sector_name] = {}
-                
-            current_sector_sum = 0.0
-            
-            for p in sector_stocks:
-                sym = p.get("Symbol", "Unknown")
-                alloc_val = p.get("Allocation")
-                current_alloc = float(alloc_val) if alloc_val is not None and not pd.isna(alloc_val) else 0.0
-                
-                # Fetch aggregated data
-                agg = tx_agg.get(sym, {"Qty": 0.0, "InvestedTotal": 0.0})
-                current_qty = agg["Qty"]
-                invested_amt = agg["InvestedTotal"]
 
-                # Create a layout: Symbol (2), Qty (3), Invested (3), Input (4)
-                col1, col2, col3, col4 = st.columns([2, 3, 3, 4])
-                with col1:
-                    st.write(f"**{sym}**")
-                with col2:
-                    st.write(f"Qty: {current_qty:.4f}")
-                with col3:
-                    st.write(f"Invested: ₹{invested_amt:,.2f}")
-                with col4:
-                    # Use number input, step=0.1 allows floats easily
-                    new_alloc = st.number_input(
-                        f"Allocation % for {sym}",
-                        value=current_alloc,
+            df = pd.DataFrame(rows)
+
+
+            edited_df = st.data_editor(
+
+                df,
+
+                hide_index=True,
+
+                use_container_width=True,
+
+                column_config={
+
+                    "Allocation %": st.column_config.NumberColumn(
+
+                        "Allocation %",
+
                         min_value=0.0,
                         max_value=100.0,
-                        step=0.1,
-                        format="%.2f",
-                        key=f"alloc_{sector_name}_{sym}",
-                        label_visibility="collapsed"
-                    )
-                    edited_dfs[sector_name][sym] = new_alloc
-                    current_sector_sum += new_alloc
-                    
-            # Show warning if sum formatting exceeds 100%
-            st.write("") # spacer
-            if current_sector_sum > 100.0:
-                st.warning(f"⚠️ Total asset allocations within this sector ({current_sector_sum:.2f}%) exceed 100%.")
+                        step=0.5
+
+                    ),
+
+                    "LTP": st.column_config.NumberColumn(format="₹%.2f"),
+                    "Invested": st.column_config.NumberColumn(format="₹%.2f"),
+                    "Expected": st.column_config.NumberColumn(format="₹%.2f"),
+                    "Inflow": st.column_config.NumberColumn(format="₹%.2f"),
+
+                },
+
+                disabled=[
+                    "Symbol",
+                    "Name",
+                    "LTP",
+                    "Qty",
+                    "Invested",
+                    "Expected",
+                    "Inflow",
+                    "Buy"
+                ]
+
+            )
+
+
+            # Allocation validation
+            sector_sum = edited_df["Allocation %"].sum()
+
+            if sector_sum > 100:
+                st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
             else:
-                st.caption(f"Current Sum: {current_sector_sum:.2f}% / 100.00% max")
+                st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
+
+
+            updates = edited_df[["Symbol","Allocation %"]].rename(
+
+                columns={"Allocation %":"Allocation"}
+
+            )
+
+            master_updates.extend(updates.to_dict("records"))
 
 
     st.divider()
 
-    # Save Button at the Bottom
-    submitted = st.form_submit_button("💾 Save All Asset Allocations", type="primary", use_container_width=True)
+    submitted = st.form_submit_button(
+        "💾 Save All Asset Allocations",
+        type="primary",
+        use_container_width=True
+    )
 
+
+# -----------------------------
+# Save Updates
+# -----------------------------
 if submitted:
-    master_updates = []
-    
-    for sector_name, symbols_dict in edited_dfs.items():
-        for sym, alloc in symbols_dict.items():
-            master_updates.append({
-                "Symbol": sym,
-                "Allocation": alloc
-            })
-            
-    with st.spinner("Saving asset allocations to Database..."):
+
+    with st.spinner("Saving allocations..."):
+
         success = db.upsert_stock_allocations(master_updates)
-        
+
     if success:
-        st.success("🎉 Asset allocations successfully saved!")
+
+        st.success("🎉 Allocations saved successfully!")
+
+    else:
+
+        st.error("Error saving allocations")
