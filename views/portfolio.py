@@ -53,7 +53,9 @@ if not db.is_configured():
     st.stop()
     
 @st.cache_data(ttl=300)
-def get_portfolio_display_data(db_stocks, open_transactions, nav_df):
+def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_allocations_tuple):
+    port_stock_allocations = dict(port_stock_allocations_tuple)
+    
     tx_agg = {}
     for tx in open_transactions:
         sym = tx.get("Symbol", "")
@@ -78,8 +80,8 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df):
         name = p.get("Name", "Unknown")
         is_equity = p.get("Equity", False)
         
-        alloc_val = p.get("Allocation")
-        alloc = float(alloc_val) if alloc_val is not None and not pd.isna(alloc_val) else 0.0
+        # Get target allocation for this specific portfolio
+        alloc = float(port_stock_allocations.get(sym, 0.0))
         
         agg = tx_agg.get(sym, {"Qty": 0.0, "InvestedTotal": 0.0})
         qty = agg["Qty"]
@@ -125,67 +127,109 @@ with st.spinner("Loading portfolio data and live market prices..."):
     db_stocks = db.fetch_stocks()
     open_transactions = db.fetch_open_transactions()
     nav_df = load_nav_data()
+    db_stock_allocations = db.fetch_stock_allocations()
+    db_investment_plan = db.fetch_investment_plan()
+    
+# Support list of plans vs single plan
+plans_list = db_investment_plan if isinstance(db_investment_plan, list) else [db_investment_plan]
+portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
 
 if not db_stocks:
     st.info("No assets found in your portfolio yet. Go to 'Stock Management' to start adding them.")
+elif not portfolio_names:
+    st.info("No investment plans found. Create a portfolio in the Build Portfolio page first.")
 else:
-    with st.spinner("Calculating live valuations..."):
-        df = get_portfolio_display_data(db_stocks, open_transactions, nav_df)
+    tabs = st.tabs(portfolio_names)
     
-    event = st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        column_config={
-            "Symbol": None,
-            "Asset Type": None,
-            "Target Allocation %": st.column_config.NumberColumn("Target \nAllocation %", format="%.2f%%"),
-            "Qty": st.column_config.NumberColumn("Current \nQty", format="%.4f"),
-            "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount", format="₹ %.2f"),
-            "% of Allocation": st.column_config.NumberColumn("% of \nAllocation", format="%.2f%%"),
-            "Avg Buy": st.column_config.NumberColumn("Avg \nBuy Price", format="₹ %.2f"),
-            "Live Price": st.column_config.NumberColumn("Live \nPrice", format="₹ %.2f"),
-            "Current Value": st.column_config.NumberColumn("Current \nValue", format="₹ %.2f"),
-        }
-    )
-
-    # 3. Order History View
-    selected_rows = event.selection.rows
-    if selected_rows:
-        selected_index = selected_rows[0]
-        selected_symbol = df.iloc[selected_index]["Symbol"]
-        selected_name = df.iloc[selected_index]["Name"]
-        
-        st.divider()
-        st.subheader(f"Order History: {selected_name} ({selected_symbol})")
-        
-        with st.spinner(f"Loading transaction history for {selected_symbol}..."):
-            history = db.fetch_transactions_by_symbol(selected_symbol)
+    for i, port_name in enumerate(portfolio_names):
+        with tabs[i]:
+            st.divider()
+            st.subheader(f"Assets for {port_name}")
             
-        if not history:
-            st.info("No transaction history found for this asset.")
-        else:
-            hist_df = pd.DataFrame(history)
+            # Filter stock targets for this specific portfolio
+            port_stock_allocations = {
+                a["Symbol"]: a["Allocation"]
+                for a in db_stock_allocations
+                if a.get("Portfolio") == port_name and a.get("Symbol")
+            }
             
-            # Format display dataframe for history
-            if "SellDate" not in hist_df.columns:
-                hist_df["SellDate"] = None
-            if "SellAvg" not in hist_df.columns:
-                hist_df["SellAvg"] = None
-                
-            display_hist = hist_df[["BuyDate", "Qty", "BuyAvg", "SellDate", "SellAvg"]].copy()
+            # Filter open transactions for this specific portfolio
+            port_open_transactions = [
+                tx for tx in open_transactions 
+                if tx.get("Portfolio") == port_name
+            ]
             
-            st.dataframe(
-                display_hist,
+            # Tuple conversion so it is hashable for st.cache_data
+            port_alloc_tuple = tuple(port_stock_allocations.items())
+            
+            with st.spinner(f"Calculating live valuations for {port_name}..."):
+                df = get_portfolio_display_data(db_stocks, port_open_transactions, nav_df, port_alloc_tuple)
+            
+            # If a portfolio has no open transactions and no asset allocations, it might be empty
+            if df.empty or (df["Qty"].sum() == 0 and df["Target Allocation %"].sum() == 0):
+                st.info(f"No assets or allocations found for {port_name}.")
+                continue
+            
+            event = st.dataframe(
+                df,
                 use_container_width=True,
                 hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key=f"data_grid_{port_name}",
                 column_config={
-                    "BuyDate": "Buy Date",
-                    "Qty": st.column_config.NumberColumn("Quantity", format="%.4f"),
-                    "BuyAvg": st.column_config.NumberColumn("Buy Price", format="₹ %.2f"),
-                    "SellDate": "Sell Date",
-                    "SellAvg": st.column_config.NumberColumn("Sell Price", format="₹ %.2f"),
+                    "Symbol": None,
+                    "Asset Type": None,
+                    "Target Allocation %": st.column_config.NumberColumn("Target \nAllocation %", format="%.2f%%"),
+                    "Qty": st.column_config.NumberColumn("Current \nQty", format="%.4f"),
+                    "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount", format="₹ %.2f"),
+                    "% of Allocation": st.column_config.NumberColumn("% of \nAllocation", format="%.2f%%"),
+                    "Avg Buy": st.column_config.NumberColumn("Avg \nBuy Price", format="₹ %.2f"),
+                    "Live Price": st.column_config.NumberColumn("Live \nPrice", format="₹ %.2f"),
+                    "Current Value": st.column_config.NumberColumn("Current \nValue", format="₹ %.2f"),
                 }
             )
+
+            # Order History View specific to this tab
+            selected_rows = event.selection.rows
+            if selected_rows:
+                selected_index = selected_rows[0]
+                selected_symbol = df.iloc[selected_index]["Symbol"]
+                selected_name = df.iloc[selected_index]["Name"]
+                
+                st.divider()
+                st.subheader(f"Order History: {selected_name} ({selected_symbol})")
+                
+                with st.spinner(f"Loading transaction history for {selected_symbol}..."):
+                    history = db.fetch_transactions_by_symbol(selected_symbol, portfolio=port_name)
+                    
+                if not history:
+                    st.info("No transaction history found for this asset.")
+                else:
+                    hist_df = pd.DataFrame(history)
+                    
+                    if "SellDate" not in hist_df.columns:
+                        hist_df["SellDate"] = None
+                    if "SellAvg" not in hist_df.columns:
+                        hist_df["SellAvg"] = None
+                        
+                    display_hist = hist_df[["BuyDate", "Qty", "BuyAvg", "SellDate", "SellAvg"]].copy()
+
+                    for date_col in ["BuyDate", "SellDate"]:
+                        display_hist[date_col] = pd.to_datetime(
+                            display_hist[date_col], errors="coerce"
+                        ).dt.strftime("%d-%b-%Y")
+
+                    st.dataframe(
+                        display_hist,
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"history_grid_{port_name}",
+                        column_config={
+                            "BuyDate": "Buy Date",
+                            "Qty": st.column_config.NumberColumn("Quantity", format="%.4f"),
+                            "BuyAvg": st.column_config.NumberColumn("Buy Price", format="₹ %.2f"),
+                            "SellDate": "Sell Date",
+                            "SellAvg": st.column_config.NumberColumn("Sell Price", format="₹ %.2f"),
+                        }
+                    )

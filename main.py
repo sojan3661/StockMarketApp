@@ -5,6 +5,7 @@ st.set_page_config(page_title="Stock Market App", layout="wide")
 # Define the pages for the multi-page app
 pages = {
     "Menu": [
+        st.Page("views/build_portfolio.py", title="Build Portfolio", icon="🏗️"),
         st.Page("views/sector_management.py", title="Sector Management", icon="📋"),
         st.Page("views/sector_allocation.py", title="Sector Allocation", icon="📊"),
         st.Page("views/stock_management.py", title="Stock Management", icon="📈"),

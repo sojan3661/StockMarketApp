@@ -110,13 +110,16 @@ class SupabaseClient:
     # SECTOR ALLOCATION API METHODS
     # ==========================================
 
-    def fetch_allocations(self):
+    def fetch_allocations(self, portfolio=None):
         """Fetches all sector allocations from the SectorAllocation table."""
         headers = self._get_headers()
         if not headers:
             return []
             
         endpoint = f"{self.url}/rest/v1/SectorAllocation?select=*"
+        if portfolio:
+            endpoint += f"&Portfolio=eq.{portfolio}"
+            
         try:
             response = requests.get(endpoint, headers=headers)
             response.raise_for_status()
@@ -125,11 +128,11 @@ class SupabaseClient:
             st.error(f"Error fetching allocations: {e}")
             return []
 
-    def upsert_allocations(self, allocations_list):
+    def upsert_allocations(self, allocations_list, portfolio):
         """
         Since the SectorAllocation table doesn't have a unique constraint on Sector,
         a standard Upsert/Merge will fail or duplicate. 
-        We resolve this by first deleting existing allocations for the passed sectors, 
+        We resolve this by first deleting existing allocations for the passed sectors and portfolio, 
         then inserting the new ones.
         """
         headers = self._get_headers()
@@ -139,11 +142,16 @@ class SupabaseClient:
         endpoint = f"{self.url}/rest/v1/SectorAllocation"
         
         try:
-            # 1. Delete existing records for these sectors
+            # 1. Delete existing records for these sectors inside this portfolio
             for alloc in allocations_list:
                 sector_name = alloc.get("Sector", "")
                 if sector_name:
-                    delete_url = f"{endpoint}?Sector=eq.{sector_name}"
+                    # properly URL encode sector name for safely building the delete URL
+                    from urllib.parse import quote
+                    safe_sector = quote(str(sector_name).strip(), safe="")
+                    safe_port = quote(str(portfolio).strip(), safe="")
+                    
+                    delete_url = f"{endpoint}?Sector=eq.{safe_sector}&Portfolio=eq.{safe_port}"
                     requests.delete(delete_url, headers=headers)
                     
             # 2. Insert the fresh records (excluding any Id column since those will be newly generated)
@@ -151,7 +159,8 @@ class SupabaseClient:
             for alloc in allocations_list:
                 clean_payload.append({
                     "Sector": alloc["Sector"],
-                    "Allocation": alloc["Allocation"]
+                    "Allocation": alloc["Allocation"],
+                    "Portfolio": portfolio
                 })
                 
             response = requests.post(endpoint, headers=headers, json=clean_payload)
@@ -241,40 +250,106 @@ class SupabaseClient:
             st.error(f"Error deleting stock: {e}")
             return False
 
+    def update_stock(self, symbol, name, is_equity, sector, is_listed, market_cap):
+        """Updates an existing stock record in StockManagement by Symbol (primary key)."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+
+        from urllib.parse import quote
+        safe_sym = quote(str(symbol).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/StockManagement?Symbol=eq.{safe_sym}"
+
+        data = {
+            "Name": name,
+            "Equity": is_equity,
+            "Sector": sector,
+            "Listed": is_listed,
+            "MarketCap": market_cap
+        }
+
+        try:
+            response = requests.patch(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: RLS policy blocked this update on StockManagement.")
+            else:
+                st.error(f"Error updating stock: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error updating stock: {e}")
+            return False
+
 
     # ==========================================
     # ASSET ALLOCATION API METHODS
     # ==========================================
 
-    def upsert_stock_allocations(self, updates_list):
-        """
-        Updates the 'Allocation' column for multiple symbols in the StockManagement table.
-        updates_list should be like: [{"Symbol": "RELIANCE", "Allocation": 10.5}, ...]
-        """
+    def fetch_stock_allocations(self, portfolio=None):
+        """Fetches all stock allocations from the StockAllocation table."""
         headers = self._get_headers()
         if not headers:
-            return False
+            return []
             
-        endpoint = f"{self.url}/rest/v1/StockManagement"
-        
+        endpoint = f"{self.url}/rest/v1/StockAllocation?select=*"
+        if portfolio:
+            endpoint += f"&Portfolio=eq.{portfolio}"
+            
         try:
-            # Supabase doesn't easily do bulk PATCH without a match array that might be complex,
-            # so we'll just loop and PATCH each one. For small portfolios, this is fine.
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error fetching stock allocations: {e}")
+            return []
+
+    def upsert_stock_allocations(self, updates_list, portfolio):
+        """
+        Updates the 'Allocation' column for multiple rows in the StockAllocation table.
+        Replaces the old row-by-row patch logic for StockManagement.
+        """
+        from urllib.parse import quote
+
+        headers = self._get_headers()
+
+        if not headers:
+            return False
+
+        endpoint = f"{self.url}/rest/v1/StockAllocation"
+
+        try:
+            # 1. Delete existing records for these symbols inside this portfolio
+            for item in updates_list:
+                sym = item.get("Symbol")
+                if sym:
+                    safe_sym = quote(str(sym).strip(), safe="")
+                    safe_port = quote(str(portfolio).strip(), safe="")
+                    delete_url = f"{endpoint}?Symbol=eq.{safe_sym}&Portfolio=eq.{safe_port}"
+                    requests.delete(delete_url, headers=headers)
+
+            # 2. Insert new records
+            clean_payload = []
             for item in updates_list:
                 sym = item.get("Symbol")
                 alloc = item.get("Allocation")
                 if sym:
-                    patch_url = f"{endpoint}?Symbol=eq.{sym}"
-                    res = requests.patch(patch_url, headers=headers, json={"Allocation": alloc})
-                    res.raise_for_status()
-            
+                    clean_payload.append({
+                        "Symbol": sym,
+                        "Allocation": float(alloc),
+                        "Portfolio": portfolio
+                    })
+                    
+            if clean_payload:
+                response = requests.post(endpoint, headers=headers, json=clean_payload)
+                response.raise_for_status()
+
             return True
-            
+
         except requests.exceptions.HTTPError as e:
-            if res.status_code == 401 or res.status_code == 403:
-                st.error("Error: Row-Level Security (RLS) policy in Supabase blocked this update.")
-            else:
-                st.error(f"Error saving stock allocations: HTTP {res.status_code} - {res.text}")
+            # Need to carefully handle the response referencing due to multiple requests above
+            st.error("Error: Action was blocked by RLS or encountered an HTTP issue saving to StockAllocation.")
             return False
         except Exception as e:
             st.error(f"Error saving stock allocations: {e}")
@@ -285,13 +360,18 @@ class SupabaseClient:
     # TRANSACTIONS API METHODS
     # ==========================================
 
-    def fetch_open_transactions(self):
+    def fetch_open_transactions(self, portfolio=None):
         """Fetches all open transactions where SellAvg is null."""
         headers = self._get_headers()
         if not headers:
             return []
             
         endpoint = f"{self.url}/rest/v1/Transactions?SellAvg=is.null&select=*"
+        if portfolio:
+            from urllib.parse import quote
+            safe_port = quote(str(portfolio).strip(), safe="")
+            endpoint += f"&Portfolio=eq.{safe_port}"
+            
         try:
             response = requests.get(endpoint, headers=headers)
             response.raise_for_status()
@@ -300,13 +380,22 @@ class SupabaseClient:
             st.error(f"Error fetching open transactions: {e}")
             return []
 
-    def fetch_transactions_by_symbol(self, symbol):
+    def fetch_transactions_by_symbol(self, symbol, portfolio=None):
         """Fetches all transactions for a specific symbol."""
         headers = self._get_headers()
         if not headers:
             return []
             
-        endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{symbol}&order=BuyDate.asc"
+        from urllib.parse import quote
+        safe_sym = quote(str(symbol).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{safe_sym}"
+        
+        if portfolio:
+            safe_port = quote(str(portfolio).strip(), safe="")
+            endpoint += f"&Portfolio=eq.{safe_port}"
+            
+        endpoint += "&order=BuyDate.asc"
+        
         try:
             response = requests.get(endpoint, headers=headers)
             response.raise_for_status()
@@ -315,7 +404,7 @@ class SupabaseClient:
             st.error(f"Error fetching transactions for {symbol}: {e}")
             return []
 
-    def add_buy_transaction(self, symbol, quantity, price, date):
+    def add_buy_transaction(self, symbol, quantity, price, date, portfolio=None):
         """Adds a new recorded BUY transaction to the Transactions table."""
         headers = self._get_headers()
         if not headers:
@@ -329,6 +418,9 @@ class SupabaseClient:
             "BuyDate": date
             # SellDate and SellAvg remain null automatically
         }
+        
+        if portfolio:
+            data["Portfolio"] = portfolio
         
         try:
             response = requests.post(endpoint, headers=headers, json=data)
@@ -344,14 +436,23 @@ class SupabaseClient:
             st.error(f"Error adding buy transaction: {e}")
             return False
 
-    def process_sell_transaction(self, symbol, sell_qty, sell_avg, sell_date):
+    def process_sell_transaction(self, symbol, sell_qty, sell_avg, sell_date, portfolio=None):
         """Processes a SELL by matching it against open BUYS (FIFO)."""
         headers = self._get_headers()
         if not headers:
             return False
             
+        from urllib.parse import quote
+        safe_sym = quote(str(symbol).strip(), safe="")
+        
         # 1. Fetch all OPEN transactions for this symbol (SellDate is null) ordered by BuyDate (FIFO)
-        endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{symbol}&SellDate=is.null&order=BuyDate.asc"
+        endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{safe_sym}&SellDate=is.null"
+        
+        if portfolio:
+            safe_port = quote(str(portfolio).strip(), safe="")
+            endpoint += f"&Portfolio=eq.{safe_port}"
+            
+        endpoint += "&order=BuyDate.asc"
         
         try:
             response = requests.get(endpoint, headers=headers)
@@ -409,6 +510,9 @@ class SupabaseClient:
                         "SellAvg": sell_avg,
                         "Qty": remaining_to_sell
                     }
+                    if portfolio:
+                        post_data["Portfolio"] = portfolio
+                        
                     n_res = requests.post(base_endpoint, headers=headers, json=post_data)
                     n_res.raise_for_status()
                     
@@ -424,6 +528,79 @@ class SupabaseClient:
             return False
         except Exception as e:
             st.error(f"Error processing sell transaction: {e}")
+            return False
+
+
+    # ==========================================
+    # INVESTMENT PLAN API METHODS
+    # ==========================================
+
+    def fetch_investment_plan(self):
+        """Fetches all investment plans. Returns a list of records."""
+        headers = self._get_headers()
+        if not headers:
+            return []
+            
+        endpoint = f"{self.url}/rest/v1/Investment%20Plan?select=*"
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error fetching investment plans: {e}")
+            return []
+
+    def upsert_investment_plan(self, portfolio, current_invested, monthly_sip, num_months, description):
+        """Upserts an investment plan. Primary key is Portfolio."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/Investment%20Plan"
+        headers["Prefer"] = "return=minimal, resolution=merge-duplicates"
+        
+        data = {
+            "Portfolio": portfolio,
+            "Current Invested Amount": current_invested,
+            "Monthly SIP": monthly_sip,
+            "Number of Months": num_months,
+            "Description": description
+        }
+        
+        try:
+            response = requests.post(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: RLS policy blocked this action on Investment Plan.")
+            else:
+                st.error(f"Error saving investment plan: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error saving investment plan: {e}")
+            return False
+
+    def delete_investment_plan(self, portfolio):
+        """Deletes an investment plan."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/Investment%20Plan?Portfolio=eq.{portfolio}"
+        
+        try:
+            response = requests.delete(endpoint, headers=headers)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: RLS policy blocked this deletion.")
+            else:
+                st.error(f"Error deleting investment plan: HTTP {response.status_code} - {e.response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error deleting investment plan: {e}")
             return False
 
 

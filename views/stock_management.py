@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
+import io
+import openpyxl
 
 # Add the app root directory to Python path to allow imports from Config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -71,8 +73,123 @@ existing_symbols = [s.get('Symbol', '').upper() for s in stocks_data if s.get('S
 nav_df = load_nav_data()
 
 # Pre-fill from session state if available
+# Pre-fill from session state if available
 if 'selected_mf' not in st.session_state:
     st.session_state.selected_mf = ""
+
+# ==================== Bulk Upload & Template ====================
+def generate_asset_template(sectors) -> bytes:
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Assets"
+
+    # Headers
+    ws.append(["Name", "Symbol", "Asset Type", "Market Cap", "Sector", "Listing Status"])
+
+    # Dropdown validation for Asset Type (C2:C1000)
+    dv_type = DataValidation(type="list", formula1='"Stock,Mutual Fund"', allow_blank=False, showDropDown=False)
+    dv_type.sqref = "C2:C1000"
+    ws.add_data_validation(dv_type)
+
+    # Dropdown validation for Market Cap (D2:D1000)
+    dv_cap = DataValidation(type="list", formula1='"Large Cap,Mid Cap,Small Cap,Multi Cap,ETF,NA"', allow_blank=True, showDropDown=False)
+    dv_cap.sqref = "D2:D1000"
+    ws.add_data_validation(dv_cap)
+    
+    # Dropdown validation for Sector (E2:E1000)
+    if sectors:
+        sector_str = ",".join(sectors)
+        # Note: Excel formula limits apply here (~255 chars), but normally sector lists are small.
+        dv_sector = DataValidation(type="list", formula1=f'"{sector_str}"', allow_blank=True, showDropDown=False)
+        dv_sector.sqref = "E2:E1000"
+        ws.add_data_validation(dv_sector)
+
+    # Dropdown validation for Listing Status (F2:F1000)
+    dv_list = DataValidation(type="list", formula1='"Listed,Unlisted"', allow_blank=True, showDropDown=False)
+    dv_list.sqref = "F2:F1000"
+    ws.add_data_validation(dv_list)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+st.subheader("Bulk Import Assets")
+col_dl, col_ul = st.columns([1, 1])
+
+with col_dl:
+    st.download_button(
+        label="📥 Download Asset Template",
+        data=generate_asset_template(existing_sectors),
+        file_name="asset_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+with col_ul:
+    uploaded_asset_file = st.file_uploader(
+        "Upload Assets",
+        type=["xlsx"],
+        label_visibility="collapsed"
+    )
+
+if uploaded_asset_file is not None:
+    with st.expander("📋 Preview & Import Uploaded Assets", expanded=True):
+        try:
+            upload_df = pd.read_excel(uploaded_asset_file, dtype=str)
+            upload_df.columns = [c.strip() for c in upload_df.columns]
+            
+            required_cols = {"Name", "Symbol", "Asset Type", "Sector"}
+            missing = required_cols - set(upload_df.columns)
+            
+            if missing:
+                st.error(f"Missing columns in file: {', '.join(missing)}")
+            else:
+                st.dataframe(upload_df, use_container_width=True, hide_index=True)
+                
+                if st.button("🚀 Import All Assets", type="primary"):
+                    success_count = 0
+                    fail_count = 0
+                    
+                    for i, row in upload_df.iterrows():
+                        name   = str(row.get("Name", "")).strip()
+                        sym    = str(row.get("Symbol", "")).strip().upper()
+                        a_type = str(row.get("Asset Type", "Stock")).strip()
+                        cap    = str(row.get("Market Cap", "NA")).strip()
+                        sec    = str(row.get("Sector", "NA")).strip()
+                        l_stat = str(row.get("Listing Status", "Listed")).strip()
+                        
+                        if not name or not sym or pd.isna(name) or pd.isna(sym):
+                            st.warning(f"Row {i+2}: Missing Name or Symbol — skipped.")
+                            fail_count += 1
+                            continue
+                            
+                        # Prevent duplicates
+                        if sym in existing_symbols and a_type == "Stock":
+                            st.warning(f"Row {i+2}: Symbol '{sym}' already exists — skipped.")
+                            fail_count += 1
+                            continue
+                            
+                        is_eq = True if a_type == "Stock" else False
+                        is_lst = True if l_stat == "Listed" or not is_eq else False
+                        
+                        ok = db.add_stock(sym, name, is_eq, sec, is_lst, cap)
+                        if ok:
+                            success_count += 1
+                            existing_symbols.append(sym) # add to local cache to prevent duplicates within same sheet
+                        else:
+                            fail_count += 1
+                            
+                    if success_count:
+                        st.success(f"✅ {success_count} asset(s) imported successfully.")
+                    if fail_count:
+                        st.error(f"❌ {fail_count} asset(s) failed — see errors/warnings above.")
+                        
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
+st.divider()
 
 @st.dialog("Search Mutual Fund")
 def search_mf_dialog():
@@ -185,23 +302,63 @@ st.subheader("Current Portfolio Assets")
 if not stocks_data:
     st.info("No stocks or mutual funds found in the database. Use the form above to add your first asset!")
 else:
+    market_cap_options = ["Large Cap", "Mid Cap", "Small Cap", "Multi Cap", "ETF", "NA"]
+
     for item in stocks_data:
-        sym = item.get("Symbol", "Unknown")
-        name = item.get("Name", "Unknown")
+        sym   = item.get("Symbol", "Unknown")
+        name  = item.get("Name", "Unknown")
         is_eq = item.get("Equity", False)
-        sec = item.get("Sector", "Unknown")
+        sec   = item.get("Sector", "Unknown")
         is_lst = item.get("Listed", True)
-        mcap = item.get("MarketCap", "NA")
-        
-        col_info, col_action = st.columns([5, 1])
-        with col_info:
-            a_type = "Stock" if is_eq else "Mutual Fund"
-            l_status = "Listed" if is_lst else "Unlisted"
-            st.write(f"**{name}** ({sym}) - *{a_type} ({l_status})* | Cap: {mcap} | Sector: {sec}")
-            
-        with col_action:
-            if st.button("Delete", key=f"del_{sym}", use_container_width=True):
-                success = db.delete_stock(sym)
-                if success:
-                    st.success(f"Deleted '{sym}'.")
-                    st.rerun()
+        mcap  = item.get("MarketCap", "NA")
+
+        a_type   = "Stock" if is_eq else "Mutual Fund"
+        l_status = "Listed" if is_lst else "Unlisted"
+
+        with st.expander(f"**{name}** ({sym}) — *{a_type} ({l_status})* | Cap: {mcap} | Sector: {sec}"):
+            tab_edit, tab_delete = st.tabs(["✏️ Edit", "🗑️ Delete"])
+
+            with tab_edit:
+                with st.form(f"edit_form_{sym}"):
+                    ec1, ec2 = st.columns(2)
+                    with ec1:
+                        new_name = st.text_input("Name", value=name)
+                        new_mcap = st.selectbox(
+                            "Market Cap",
+                            options=market_cap_options,
+                            index=market_cap_options.index(mcap) if mcap in market_cap_options else len(market_cap_options) - 1
+                        )
+                    with ec2:
+                        new_sector = st.selectbox(
+                            "Sector",
+                            options=existing_sectors,
+                            index=existing_sectors.index(sec) if sec in existing_sectors else 0
+                        )
+                        new_asset_type = st.selectbox(
+                            "Asset Type",
+                            options=["Stock", "Mutual Fund"],
+                            index=0 if is_eq else 1
+                        )
+                        new_listing = st.selectbox(
+                            "Listing Status",
+                            options=["Listed", "Unlisted"],
+                            index=0 if is_lst else 1
+                        )
+
+                    save_btn = st.form_submit_button("💾 Save Changes", type="primary")
+                    if save_btn:
+                        new_is_eq  = new_asset_type == "Stock"
+                        new_is_lst = new_listing == "Listed"
+                        ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap)
+                        if ok:
+                            st.success(f"Updated '{sym}' successfully!")
+                            st.rerun()
+
+            with tab_delete:
+                st.warning(f"Are you sure you want to delete **{name}** ({sym})? This cannot be undone.")
+                if st.button("🗑️ Confirm Delete", key=f"del_{sym}", type="primary"):
+                    ok = db.delete_stock(sym)
+                    if ok:
+                        st.success(f"Deleted '{sym}'.")
+                        st.rerun()
+
