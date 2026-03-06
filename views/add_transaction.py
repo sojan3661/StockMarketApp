@@ -1,7 +1,9 @@
 import streamlit as st
 import datetime
+import io
 import sys
 import os
+import openpyxl
 
 # Add the app root directory to Python path to allow imports from Config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -25,6 +27,120 @@ if not db_stocks:
     st.info("No assets found in your portfolio yet. Go to 'Stock Management' to start adding assets before recording transactions.")
 else:
     available_symbols = sorted([p.get("Symbol", "") for p in db_stocks if p.get("Symbol", "")])
+
+# -----------------------------
+# Download Template Button
+# -----------------------------
+def generate_transaction_template() -> bytes:
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Transactions"
+
+    # Headers
+    ws.append(["Symbol", "Type", "Qty", "Avg", "Date"])
+
+    # Dropdown validation for the Type column (B2:B1000)
+    dv = DataValidation(
+        type="list",
+        formula1='"Buy,Sell"',
+        allow_blank=True,
+        showDropDown=False      # False = show the dropdown arrow in Excel
+    )
+    dv.sqref = "B2:B1000"
+    ws.add_data_validation(dv)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+col_dl, col_ul, _ = st.columns([1, 1, 2])
+with col_dl:
+    st.download_button(
+        label="📥 Download Template",
+        data=generate_transaction_template(),
+        file_name="transaction_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+with col_ul:
+    uploaded_file = st.file_uploader(
+        "Upload Transactions",
+        type=["xlsx"],
+        label_visibility="collapsed"
+    )
+
+# -----------------------------
+# Bulk Upload Processing
+# -----------------------------
+if uploaded_file is not None:
+    with st.expander("📋 Preview & Import Uploaded Transactions", expanded=True):
+        try:
+            import pandas as pd
+            upload_df = pd.read_excel(uploaded_file, dtype=str)
+
+            # Normalise column names (strip spaces, title-case)
+            upload_df.columns = [c.strip() for c in upload_df.columns]
+
+            required_cols = {"Symbol", "Type", "Qty", "Avg", "Date"}
+            missing = required_cols - set(upload_df.columns)
+            if missing:
+                st.error(f"Missing columns in file: {', '.join(missing)}")
+            else:
+                # Build a display copy with Date formatted as dd-mmm-yyyy
+                display_df = upload_df.copy()
+                try:
+                    display_df["Date"] = pd.to_datetime(
+                        upload_df["Date"], dayfirst=True
+                    ).dt.strftime("%d-%b-%Y")
+                except Exception:
+                    pass  # Leave as-is if parsing fails
+
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+                if st.button("🚀 Import All Transactions", type="primary"):
+                    success_count = 0
+                    fail_count = 0
+
+                    for i, row in upload_df.iterrows():
+                        sym   = str(row["Symbol"]).strip()
+                        ttype = str(row["Type"]).strip().capitalize()
+                        qty   = float(row["Qty"])
+                        avg   = float(row["Avg"])
+                        date  = str(row["Date"]).strip()[:10]  # Ensure YYYY-MM-DD
+
+                        if ttype == "Buy":
+                            ok = db.add_buy_transaction(
+                                symbol=sym,
+                                quantity=qty,
+                                price=avg,
+                                date=date
+                            )
+                        elif ttype == "Sell":
+                            ok = db.process_sell_transaction(
+                                symbol=sym,
+                                sell_qty=qty,
+                                sell_avg=avg,
+                                sell_date=date
+                            )
+                        else:
+                            st.warning(f"Row {i+2}: Unknown Type '{ttype}' — skipped.")
+                            fail_count += 1
+                            continue
+
+                        if ok:
+                            success_count += 1
+                        else:
+                            fail_count += 1
+
+                    if success_count:
+                        st.success(f"✅ {success_count} transaction(s) imported successfully.")
+                    if fail_count:
+                        st.error(f"❌ {fail_count} transaction(s) failed — see errors above.")
+
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
 
 st.subheader("Transaction Details")
 

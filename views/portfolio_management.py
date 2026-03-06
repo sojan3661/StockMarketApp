@@ -231,6 +231,8 @@ with st.form("portfolio_allocations_form"):
 
                 column_config={
 
+                    "Name": None,   # Hidden — used internally for MF save fallback
+
                     "Allocation %": st.column_config.NumberColumn(
 
                         "Allocation %",
@@ -257,6 +259,7 @@ with st.form("portfolio_allocations_form"):
                     "Expected",
                     "Inflow",
                     "Buy"
+                    # "Allocation %" is editable — intentionally excluded from disabled list
                 ]
 
             )
@@ -271,9 +274,9 @@ with st.form("portfolio_allocations_form"):
                 st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
 
 
-            updates = edited_df[["Symbol","Allocation %"]].rename(
+            updates = edited_df[["Symbol", "Name", "Allocation %"]].rename(
 
-                columns={"Allocation %":"Allocation"}
+                columns={"Allocation %": "Allocation"}
 
             )
 
@@ -301,6 +304,8 @@ if submitted:
     if success:
 
         st.success("🎉 Allocations saved successfully!")
+        st.cache_data.clear()   # Bust cached DB + NAV data
+        st.rerun()              # Reload page with fresh data from DB
 
     else:
 

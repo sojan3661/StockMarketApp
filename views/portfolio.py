@@ -176,7 +176,13 @@ else:
                 hist_df["SellAvg"] = None
                 
             display_hist = hist_df[["BuyDate", "Qty", "BuyAvg", "SellDate", "SellAvg"]].copy()
-            
+
+            # Format dates as dd-mmm-yyyy
+            for date_col in ["BuyDate", "SellDate"]:
+                display_hist[date_col] = pd.to_datetime(
+                    display_hist[date_col], errors="coerce"
+                ).dt.strftime("%d-%b-%Y")
+
             st.dataframe(
                 display_hist,
                 use_container_width=True,

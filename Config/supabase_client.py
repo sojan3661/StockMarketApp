@@ -248,9 +248,12 @@ class SupabaseClient:
 
     def upsert_stock_allocations(self, updates_list):
         """
-        Updates the 'Allocation' column for multiple symbols in the StockManagement table.
-        updates_list should be like: [{"Symbol": "RELIANCE", "Allocation": 10.5}, ...]
+        Updates the 'Allocation' column for multiple rows in the StockManagement table.
+        Symbol is URL-encoded before the API call to handle spaces and & in MF symbols
+        e.g. 'TATA INDIA PHARMA & HEALTHCARE FUND-DIRECT PLAN-GROWTH'
         """
+        from urllib.parse import quote
+
         headers = self._get_headers()
 
         if not headers:
@@ -263,16 +266,21 @@ class SupabaseClient:
             for item in updates_list:
 
                 sym = item.get("Symbol")
+                name = item.get("Name")
                 alloc = item.get("Allocation")
 
-                if sym is None:
-                    continue
+                payload = {"Allocation": float(alloc)}
 
-                patch_url = f"{endpoint}?Symbol=eq.{sym}"
-
-                payload = {
-                    "Allocation": float(alloc)
-                }
+                # --- Pre-process: encode symbol/name before building URL ---
+                # Handles spaces, &, and other special chars in mutual fund symbols
+                if sym:
+                    encoded_key = quote(str(sym).strip(), safe="")
+                    patch_url = f"{endpoint}?Symbol=eq.{encoded_key}"
+                elif name:
+                    encoded_key = quote(str(name).strip(), safe="")
+                    patch_url = f"{endpoint}?Name=eq.{encoded_key}"
+                else:
+                    continue  # Nothing to match on — skip
 
                 res = requests.patch(
                     patch_url,
@@ -280,9 +288,9 @@ class SupabaseClient:
                     json=payload
                 )
 
-                # Debug if needed
                 if res.status_code not in [200, 204]:
-                    st.error(f"Failed update for {sym}: {res.text}")
+                    label = sym or name
+                    st.error(f"Failed update for {label}: {res.text}")
                     return False
 
             return True
