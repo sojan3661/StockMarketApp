@@ -250,6 +250,38 @@ class SupabaseClient:
             st.error(f"Error deleting stock: {e}")
             return False
 
+    def update_stock(self, symbol, name, is_equity, sector, is_listed, market_cap):
+        """Updates an existing stock record in StockManagement by Symbol (primary key)."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+
+        from urllib.parse import quote
+        safe_sym = quote(str(symbol).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/StockManagement?Symbol=eq.{safe_sym}"
+
+        data = {
+            "Name": name,
+            "Equity": is_equity,
+            "Sector": sector,
+            "Listed": is_listed,
+            "MarketCap": market_cap
+        }
+
+        try:
+            response = requests.patch(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 401 or response.status_code == 403:
+                st.error("Error: RLS policy blocked this update on StockManagement.")
+            else:
+                st.error(f"Error updating stock: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error updating stock: {e}")
+            return False
+
 
     # ==========================================
     # ASSET ALLOCATION API METHODS

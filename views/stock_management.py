@@ -302,23 +302,63 @@ st.subheader("Current Portfolio Assets")
 if not stocks_data:
     st.info("No stocks or mutual funds found in the database. Use the form above to add your first asset!")
 else:
+    market_cap_options = ["Large Cap", "Mid Cap", "Small Cap", "Multi Cap", "ETF", "NA"]
+
     for item in stocks_data:
-        sym = item.get("Symbol", "Unknown")
-        name = item.get("Name", "Unknown")
+        sym   = item.get("Symbol", "Unknown")
+        name  = item.get("Name", "Unknown")
         is_eq = item.get("Equity", False)
-        sec = item.get("Sector", "Unknown")
+        sec   = item.get("Sector", "Unknown")
         is_lst = item.get("Listed", True)
-        mcap = item.get("MarketCap", "NA")
-        
-        col_info, col_action = st.columns([5, 1])
-        with col_info:
-            a_type = "Stock" if is_eq else "Mutual Fund"
-            l_status = "Listed" if is_lst else "Unlisted"
-            st.write(f"**{name}** ({sym}) - *{a_type} ({l_status})* | Cap: {mcap} | Sector: {sec}")
-            
-        with col_action:
-            if st.button("Delete", key=f"del_{sym}", use_container_width=True):
-                success = db.delete_stock(sym)
-                if success:
-                    st.success(f"Deleted '{sym}'.")
-                    st.rerun()
+        mcap  = item.get("MarketCap", "NA")
+
+        a_type   = "Stock" if is_eq else "Mutual Fund"
+        l_status = "Listed" if is_lst else "Unlisted"
+
+        with st.expander(f"**{name}** ({sym}) — *{a_type} ({l_status})* | Cap: {mcap} | Sector: {sec}"):
+            tab_edit, tab_delete = st.tabs(["✏️ Edit", "🗑️ Delete"])
+
+            with tab_edit:
+                with st.form(f"edit_form_{sym}"):
+                    ec1, ec2 = st.columns(2)
+                    with ec1:
+                        new_name = st.text_input("Name", value=name)
+                        new_mcap = st.selectbox(
+                            "Market Cap",
+                            options=market_cap_options,
+                            index=market_cap_options.index(mcap) if mcap in market_cap_options else len(market_cap_options) - 1
+                        )
+                    with ec2:
+                        new_sector = st.selectbox(
+                            "Sector",
+                            options=existing_sectors,
+                            index=existing_sectors.index(sec) if sec in existing_sectors else 0
+                        )
+                        new_asset_type = st.selectbox(
+                            "Asset Type",
+                            options=["Stock", "Mutual Fund"],
+                            index=0 if is_eq else 1
+                        )
+                        new_listing = st.selectbox(
+                            "Listing Status",
+                            options=["Listed", "Unlisted"],
+                            index=0 if is_lst else 1
+                        )
+
+                    save_btn = st.form_submit_button("💾 Save Changes", type="primary")
+                    if save_btn:
+                        new_is_eq  = new_asset_type == "Stock"
+                        new_is_lst = new_listing == "Listed"
+                        ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap)
+                        if ok:
+                            st.success(f"Updated '{sym}' successfully!")
+                            st.rerun()
+
+            with tab_delete:
+                st.warning(f"Are you sure you want to delete **{name}** ({sym})? This cannot be undone.")
+                if st.button("🗑️ Confirm Delete", key=f"del_{sym}", type="primary"):
+                    ok = db.delete_stock(sym)
+                    if ok:
+                        st.success(f"Deleted '{sym}'.")
+                        st.rerun()
+

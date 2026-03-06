@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
+import io
+import openpyxl
 
 # Add the app root directory to Python path to allow imports from Config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -50,6 +52,158 @@ for alloc in allocations_data:
             "Allocation": alloc.get("Allocation", 0.0)
         }
 
+# ==================== Bulk Upload & Template ====================
+def generate_allocation_template(portfolios, sectors) -> bytes:
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Allocations"
+
+    # Headers
+    ws.append(["Portfolio", "Sector", "Allocation %"])
+
+    # Dropdown validation for Portfolio (A2:A1000)
+    if portfolios:
+        port_str = ",".join(portfolios)
+        dv_port = DataValidation(type="list", formula1=f'"{port_str}"', allow_blank=False, showDropDown=False)
+        dv_port.sqref = "A2:A1000"
+        ws.add_data_validation(dv_port)
+
+    # Dropdown validation for Sector (B2:B1000)
+    if sectors:
+        sector_names = [s.get("Sector") for s in sectors if s.get("Sector")]
+        if sector_names:
+            sector_str = ",".join(sector_names)
+            dv_sector = DataValidation(type="list", formula1=f'"{sector_str}"', allow_blank=False, showDropDown=False)
+            dv_sector.sqref = "B2:B1000"
+            ws.add_data_validation(dv_sector)
+
+    # Number validation for Allocation (C2:C1000)
+    dv_alloc = DataValidation(type="decimal", operator="between", formula1="0.0", formula2="100.0", allow_blank=False)
+    dv_alloc.error = 'Allocation must be between 0 and 100'
+    dv_alloc.errorTitle = 'Invalid Allocation'
+    dv_alloc.prompt = 'Enter a percentage from 0 to 100 (e.g., 12.5)'
+    dv_alloc.promptTitle = 'Allocation %'
+    dv_alloc.sqref = "C2:C1000"
+    ws.add_data_validation(dv_alloc)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+st.subheader("Bulk Import Allocations")
+col_dl, col_ul = st.columns([1, 1])
+
+with col_dl:
+    st.download_button(
+        label="📥 Download Allocation Template",
+        data=generate_allocation_template(portfolio_names, sectors_data),
+        file_name="sector_allocation_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+with col_ul:
+    uploaded_alloc_file = st.file_uploader(
+        "Upload Allocations",
+        type=["xlsx"],
+        label_visibility="collapsed"
+    )
+
+if uploaded_alloc_file is not None:
+    with st.expander("📋 Preview & Import Uploaded Allocations", expanded=True):
+        try:
+            upload_df = pd.read_excel(uploaded_alloc_file, dtype=str)
+            upload_df.columns = [c.strip() for c in upload_df.columns]
+            
+            required_cols = {"Portfolio", "Sector", "Allocation %"}
+            missing = required_cols - set(upload_df.columns)
+            
+            if missing:
+                st.error(f"Missing columns in file: {', '.join(missing)}")
+            else:
+                st.dataframe(upload_df, use_container_width=True, hide_index=True)
+                
+                if st.button("🚀 Import All Allocations", type="primary"):
+                    # We group modifications by portfolio, as upsert_allocations takes a portfolio arg
+                    
+                    # 1. Group records by portfolio
+                    port_updates = {}
+                    fail_count = 0
+                    
+                    valid_sectors = [s.get("Sector", "").lower() for s in sectors_data]
+                    
+                    for i, row in upload_df.iterrows():
+                        port = str(row.get("Portfolio", "")).strip()
+                        sec  = str(row.get("Sector", "")).strip()
+                        alloc_val = row.get("Allocation %", "0")
+                        
+                        try:
+                            alloc = float(alloc_val)
+                        except ValueError:
+                            st.warning(f"Row {i+2}: Invalid Allocation value '{alloc_val}' — skipped.")
+                            fail_count += 1
+                            continue
+                            
+                        if not port or not sec:
+                            st.warning(f"Row {i+2}: Missing Portfolio or Sector — skipped.")
+                            fail_count += 1
+                            continue
+                            
+                        if port not in portfolio_names:
+                            st.warning(f"Row {i+2}: Unknown Portfolio '{port}' — skipped.")
+                            fail_count += 1
+                            continue
+                            
+                        # Case insensitive sector match to fix common typos
+                        matched_sector = next((s.get("Sector") for s in sectors_data if s.get("Sector", "").lower() == sec.lower()), None)
+                        
+                        if not matched_sector:
+                            st.warning(f"Row {i+2}: Unknown Sector '{sec}'. Please add it in Sector Management first — skipped.")
+                            fail_count += 1
+                            continue
+                            
+                        if port not in port_updates:
+                            port_updates[port] = []
+                            
+                        port_updates[port].append({
+                            "Sector": matched_sector,
+                            "Allocation": alloc,
+                            "Portfolio": port
+                        })
+                    
+                    # 2. Iterate and Save per Portfolio
+                    success_count = 0
+                    
+                    for port, payload in port_updates.items():
+                        # Calculate total allocation for validation
+                        total_alloc = sum([r["Allocation"] for r in payload])
+                        if total_alloc > 100.0:
+                            st.error(f"❌ Failed to import {port}: Total allocation exceeds 100% ({total_alloc}%). Skipping this portfolio.")
+                            fail_count += len(payload)
+                            continue
+                            
+                        # Execute upsert block
+                        ok = db.upsert_allocations(payload, portfolio=port)
+                        if ok:
+                            success_count += len(payload)
+                        else:
+                            st.error(f"❌ Failed to save updates for portfolio: {port}")
+                            fail_count += len(payload)
+                            
+                    if success_count:
+                        st.success(f"✅ {success_count} allocation(s) imported successfully.")
+                        st.cache_data.clear() # clear caches so UI picks up change immediately
+                        st.rerun()
+                        
+                    if fail_count:
+                        st.error(f"⚠️ {fail_count} allocation(s) failed or skipped — see messages above.")
+                        
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
+st.divider()
 st.subheader("Edit Allocations")
 
 # Create a tab for each portfolio
@@ -93,7 +247,7 @@ for i, port_name in enumerate(portfolio_names):
             column_config={
                 "Id": None,
                 "Sector": st.column_config.TextColumn("Sector / Theme", disabled=True),
-                "Allocation": st.column_config.NumberColumn("Allocation %", min_value=0.0, max_value=100.0, step=1.0, format="%.2f%%")
+                "Allocation": st.column_config.NumberColumn("Allocation %", min_value=0.0, max_value=100.0, step=0.01, format="%.2f%%")
             },
             use_container_width=True
         )

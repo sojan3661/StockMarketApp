@@ -149,16 +149,25 @@ for i, port_name in enumerate(portfolio_names):
         
         # 2. Calculate Expected Investment for this specific portfolio
         plan_details = next((p for p in plans_list if p.get("Portfolio") == port_name), {})
-        current_invested = plan_details.get("Current Invested Amount", 0)
         monthly_sip = plan_details.get("Monthly SIP") or 0
         months = plan_details.get("Number of Months") or 0
-        total_expected = current_invested + (monthly_sip * months)
+        
+        # Current invested = sum of Qty * BuyAvg for open transactions in this portfolio
+        port_open_tx = [tx for tx in open_transactions if tx.get("Portfolio") == port_name]
+        current_invested = sum(
+            float(tx.get("Qty", 0)) * float(tx.get("BuyAvg", 0))
+            for tx in port_open_tx
+        )
+        
+        total_expected = plan_details.get("Current Invested Amount", 0) + (monthly_sip * months)
         
         # 3. Header
-        col1, col2 = st.columns([3,1])
+        col1, col2, col3 = st.columns([3, 1, 1])
         with col1:
             st.subheader(f"Asset Allocation for {port_name}")
         with col2:
+            st.metric("Current Invested", f"₹{current_invested:,.2f}")
+        with col3:
             st.metric("Expected Investment", f"₹{total_expected:,.2f}")
             
             
@@ -174,6 +183,10 @@ for i, port_name in enumerate(portfolio_names):
                 
                 sector_name = sector_row.get("Sector")
                 target_alloc = sector_alloc_dict.get(sector_name, 0)
+                
+                # Skip sectors with no allocation assigned for this portfolio
+                if not target_alloc or target_alloc <= 0:
+                    continue
                 sector_expected = total_expected * (target_alloc / 100)
                 
                 with st.expander(
