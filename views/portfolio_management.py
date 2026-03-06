@@ -20,6 +20,23 @@ with st.spinner("Loading stock data..."):
     db_sectors = db.fetch_sectors()
     db_allocations = db.fetch_allocations()
     db_stocks = db.fetch_stocks()
+    open_transactions = db.fetch_open_transactions()
+
+# Calculate Qty and Invested Amount for each stock from open transactions
+tx_agg = {}
+for tx in open_transactions:
+    sym = tx.get("Symbol", "")
+    if not sym:
+        continue
+    
+    qty = float(tx.get("Qty", 0.0))
+    buy_avg = float(tx.get("BuyAvg", 0.0))
+    
+    if sym not in tx_agg:
+        tx_agg[sym] = {"Qty": 0.0, "InvestedTotal": 0.0}
+        
+    tx_agg[sym]["Qty"] += qty
+    tx_agg[sym]["InvestedTotal"] += (buy_avg * qty)
 
 # Quick dictionary for sector target allocations { 'Technology': 25.0 }
 sector_alloc_dict = {alloc["Sector"]: alloc["Allocation"] for alloc in db_allocations if alloc.get("Sector")}
@@ -76,11 +93,20 @@ with st.form("portfolio_allocations_form"):
                 alloc_val = p.get("Allocation")
                 current_alloc = float(alloc_val) if alloc_val is not None and not pd.isna(alloc_val) else 0.0
                 
-                # Create a simple row layout: Symbol on left, Input on right
-                col1, col2 = st.columns([1, 2])
+                # Fetch aggregated data
+                agg = tx_agg.get(sym, {"Qty": 0.0, "InvestedTotal": 0.0})
+                current_qty = agg["Qty"]
+                invested_amt = agg["InvestedTotal"]
+
+                # Create a layout: Symbol (2), Qty (3), Invested (3), Input (4)
+                col1, col2, col3, col4 = st.columns([2, 3, 3, 4])
                 with col1:
                     st.write(f"**{sym}**")
                 with col2:
+                    st.write(f"Qty: {current_qty:.4f}")
+                with col3:
+                    st.write(f"Invested: ₹{invested_amt:,.2f}")
+                with col4:
                     # Use number input, step=0.1 allows floats easily
                     new_alloc = st.number_input(
                         f"Allocation % for {sym}",

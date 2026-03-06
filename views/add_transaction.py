@@ -8,7 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
 
 st.title("Add Transaction")
-st.write("Record your individual Buy and Sell orders to build your historical tracking.")
+
 
 # Verification check for credentials
 if not db.is_configured():
