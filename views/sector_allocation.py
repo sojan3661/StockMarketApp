@@ -10,7 +10,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
 
 st.title("Sector Allocation")
-st.write("Assign target allocations (percentages) to your market sectors.")
 
 # Verification check for credentials
 if not db.is_configured():

@@ -8,7 +8,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
 
 st.title("Build Portfolio")
-st.write("Manage your investment plans.")
 
 # Verification check for credentials
 if not db.is_configured():

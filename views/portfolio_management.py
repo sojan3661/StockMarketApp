@@ -12,7 +12,6 @@ from Config.supabase_client import db
 
 
 st.title("Portfolio Rebalancing")
-st.write("Assign target allocations (percentages) to the specific stocks within each sector.")
 
 # -----------------------------
 # Supabase Check

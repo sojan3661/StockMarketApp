@@ -55,8 +55,7 @@ def get_stock_price(symbol):
             pass
     return None
 
-st.title("Stock Management")
-st.write("Manage your stocks and mutual funds portfolio.")
+st.title("Asset Management")
 
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
@@ -200,8 +199,8 @@ def search_mf_dialog():
             if matches.empty:
                 st.write("No matches found.")
             else:
-                st.write(f"Found {len(matches)} matches. Showing top 20:")
-                for idx, row in matches.head(20).iterrows():
+                st.write(f"Found {len(matches)} matches:")
+                for idx, row in matches.iterrows():
                     col_name, col_btn = st.columns([4, 1])
                     with col_name:
                         st.write(row['scheme_name'])

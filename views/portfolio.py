@@ -44,7 +44,6 @@ def get_stock_price(symbol):
     return None
 
 st.title("Portfolio Overview")
-st.write("A summary view of all your assets sorted by Sector, including Live Valuations.")
 
 # Verification check for credentials
 if not db.is_configured():
