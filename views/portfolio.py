@@ -117,6 +117,10 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
             "Current Value": current_value
         })
         
+    if not display_data:
+        return pd.DataFrame(columns=["Sector", "Symbol", "Name", "Asset Type", "Listing",
+                                     "Target Allocation %", "Qty", "Invested Amount",
+                                     "% of Allocation", "Avg Buy", "Live Price", "Current Value"])
     df = pd.DataFrame(display_data)
     df = df.sort_values(by=["Sector", "Symbol"], ascending=[True, True])
     df = df.reset_index(drop=True)
@@ -145,12 +149,16 @@ else:
             st.divider()
             st.subheader(f"Assets for {port_name}")
             
-            # Filter stock targets for this specific portfolio
+            # Filter stock targets for this specific portfolio (only allocation > 0)
             port_stock_allocations = {
                 a["Symbol"]: a["Allocation"]
                 for a in db_stock_allocations
-                if a.get("Portfolio") == port_name and a.get("Symbol")
+                if a.get("Portfolio") == port_name and a.get("Symbol") and (a.get("Allocation") or 0) > 0
             }
+            
+            # Only show assets mapped to this portfolio in StockAllocation
+            mapped_symbols = set(port_stock_allocations.keys())
+            port_stocks = [s for s in db_stocks if s.get("Symbol") in mapped_symbols]
             
             # Filter open transactions for this specific portfolio
             port_open_transactions = [
@@ -162,12 +170,25 @@ else:
             port_alloc_tuple = tuple(port_stock_allocations.items())
             
             with st.spinner(f"Calculating live valuations for {port_name}..."):
-                df = get_portfolio_display_data(db_stocks, port_open_transactions, nav_df, port_alloc_tuple)
+                df = get_portfolio_display_data(port_stocks, port_open_transactions, nav_df, port_alloc_tuple)
             
             # If a portfolio has no open transactions and no asset allocations, it might be empty
             if df.empty or (df["Qty"].sum() == 0 and df["Target Allocation %"].sum() == 0):
                 st.info(f"No assets or allocations found for {port_name}.")
                 continue
+            
+            # Summary metrics
+            total_invested = df["Invested Amount"].sum()
+            total_current_value = df["Current Value"].sum()
+            gain_loss = total_current_value - total_invested
+            gain_loss_pct = (gain_loss / total_invested * 100) if total_invested > 0 else 0
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("💰 Total Invested", f"₹{total_invested:,.2f}")
+            m2.metric("📈 Current Value", f"₹{total_current_value:,.2f}")
+            m3.metric("📊 Gain / Loss", f"₹{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
+            
+            st.divider()
             
             event = st.dataframe(
                 df,
