@@ -52,12 +52,72 @@ for alloc in allocations_data:
         }
 
 # ==================== Bulk Import ====================
+@st.cache_data
+def generate_allocation_template(portfolios, sectors) -> bytes:
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Allocations"
+
+    # Headers
+    ws.append(["Portfolio", "Sector", "Allocation %"])
+
+    # ── Hidden reference sheet for long dropdown lists ────────────────────────
+    ref_ws = wb.create_sheet("_Ref")
+    ref_ws.sheet_state = "hidden"
+
+    # Write portfolios to _Ref col A
+    for i, p in enumerate(portfolios, start=1):
+        ref_ws.cell(row=i, column=1, value=p)
+    port_range = f"_Ref!$A$1:$A${max(len(portfolios), 1)}" if portfolios else None
+
+    # Write sectors to _Ref col B
+    sector_names = [s.get("Sector") for s in sectors if s.get("Sector")]
+    for i, s in enumerate(sector_names, start=1):
+        ref_ws.cell(row=i, column=2, value=s)
+    sec_range = f"_Ref!$B$1:$B${max(len(sector_names), 1)}" if sector_names else None
+
+    # Dropdown validation for Portfolio (A2:A1000)
+    if port_range:
+        dv_port = DataValidation(type="list", formula1=port_range, allow_blank=False, showDropDown=False)
+        dv_port.sqref = "A2:A1000"
+        ws.add_data_validation(dv_port)
+
+    # Dropdown validation for Sector (B2:B1000)
+    if sec_range:
+        dv_sector = DataValidation(type="list", formula1=sec_range, allow_blank=False, showDropDown=False)
+        dv_sector.sqref = "B2:B1000"
+        ws.add_data_validation(dv_sector)
+
+    # Number validation for Allocation (C2:C1000)
+    dv_alloc = DataValidation(type="decimal", operator="between", formula1="0.0", formula2="100.0", allow_blank=False)
+    dv_alloc.error = 'Allocation must be between 0 and 100'
+    dv_alloc.errorTitle = 'Invalid Allocation'
+    dv_alloc.prompt = 'Enter a percentage from 0 to 100 (e.g., 12.5)'
+    dv_alloc.promptTitle = 'Allocation %'
+    dv_alloc.sqref = "C2:C1000"
+    ws.add_data_validation(dv_alloc)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
 st.subheader("Bulk Import Allocations")
-uploaded_alloc_file = st.file_uploader(
-    "Upload Allocations",
-    type=["xlsx"],
-    label_visibility="collapsed"
-)
+col_dl, col_ul = st.columns([1, 1])
+
+with col_dl:
+    import base64
+    b64_data = base64.b64encode(generate_allocation_template(portfolio_names, sectors_data)).decode()
+    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}" download="sector_allocation_template.xlsx" style="display: block; width: 100%; padding: 0.5rem 1rem; background-color: #2D333B; border: 1px solid #4B5563; color: #E2E8F0; text-align: center; text-decoration: none; border-radius: 8px; font-weight: 500; box-sizing: border-box; transition: background-color 0.2s;">📥 Download Allocation Template</a>'
+    st.markdown(href, unsafe_allow_html=True)
+
+with col_ul:
+    uploaded_alloc_file = st.file_uploader(
+        "Upload Allocations",
+        type=["xlsx"],
+        label_visibility="collapsed"
+    )
 
 if uploaded_alloc_file is not None:
     with st.expander("📋 Preview & Import Uploaded Allocations", expanded=True):

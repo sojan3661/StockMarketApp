@@ -25,12 +25,31 @@ with st.spinner("Loading sectors..."):
 existing_names = [s.get('Sector', '').lower() for s in sectors_data]
 
 # ==================== Bulk Import ====================
+@st.cache_data
+def generate_sector_template() -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sectors"
+    ws.append(["Sector"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
 st.subheader("Bulk Import Sectors")
-uploaded_sector_file = st.file_uploader(
-    "Upload Sectors",
-    type=["xlsx"],
-    label_visibility="collapsed"
-)
+col_dl, col_ul = st.columns([1, 1])
+
+with col_dl:
+    import base64
+    b64_data = base64.b64encode(generate_sector_template()).decode()
+    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}" download="sector_template.xlsx" style="display: block; width: 100%; padding: 0.5rem 1rem; background-color: #2D333B; border: 1px solid #4B5563; color: #E2E8F0; text-align: center; text-decoration: none; border-radius: 8px; font-weight: 500; box-sizing: border-box; transition: background-color 0.2s;">📥 Download Sector Template</a>'
+    st.markdown(href, unsafe_allow_html=True)
+
+with col_ul:
+    uploaded_sector_file = st.file_uploader(
+        "Upload Sectors",
+        type=["xlsx"],
+        label_visibility="collapsed"
+    )
 
 if uploaded_sector_file is not None:
     with st.expander("📋 Preview & Import Uploaded Sectors", expanded=True):

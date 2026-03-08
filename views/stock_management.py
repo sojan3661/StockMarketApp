@@ -77,12 +77,58 @@ if 'selected_mf' not in st.session_state:
     st.session_state.selected_mf = ""
 
 # ==================== Bulk Import ====================
+@st.cache_data
+def generate_asset_template(sectors) -> bytes:
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Assets"
+
+    # Headers
+    ws.append(["Name", "Symbol", "Asset Type", "Market Cap", "Sector", "Listing Status"])
+
+    # Dropdown validation for Asset Type (C2:C1000)
+    dv_type = DataValidation(type="list", formula1='"Stock,Mutual Fund"', allow_blank=False, showDropDown=False)
+    dv_type.sqref = "C2:C1000"
+    ws.add_data_validation(dv_type)
+
+    # Dropdown validation for Market Cap (D2:D1000)
+    dv_cap = DataValidation(type="list", formula1='"Large Cap,Mid Cap,Small Cap,Multi Cap,ETF,NA"', allow_blank=True, showDropDown=False)
+    dv_cap.sqref = "D2:D1000"
+    ws.add_data_validation(dv_cap)
+    
+    # Dropdown validation for Sector (E2:E1000)
+    if sectors:
+        sector_str = ",".join(sectors)
+        dv_sector = DataValidation(type="list", formula1=f'"{sector_str}"', allow_blank=True, showDropDown=False)
+        dv_sector.sqref = "E2:E1000"
+        ws.add_data_validation(dv_sector)
+
+    # Dropdown validation for Listing Status (F2:F1000)
+    dv_list = DataValidation(type="list", formula1='"Listed,Unlisted"', allow_blank=True, showDropDown=False)
+    dv_list.sqref = "F2:F1000"
+    ws.add_data_validation(dv_list)
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
 st.subheader("Bulk Import Assets")
-uploaded_asset_file = st.file_uploader(
-    "Upload Assets",
-    type=["xlsx"],
-    label_visibility="collapsed"
-)
+col_dl, col_ul = st.columns([1, 1])
+
+with col_dl:
+    import base64
+    b64_data = base64.b64encode(generate_asset_template(existing_sectors)).decode()
+    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}" download="asset_template.xlsx" style="display: block; width: 100%; padding: 0.5rem 1rem; background-color: #2D333B; border: 1px solid #4B5563; color: #E2E8F0; text-align: center; text-decoration: none; border-radius: 8px; font-weight: 500; box-sizing: border-box; transition: background-color 0.2s;">📥 Download Asset Template</a>'
+    st.markdown(href, unsafe_allow_html=True)
+
+with col_ul:
+    uploaded_asset_file = st.file_uploader(
+        "Upload Assets",
+        type=["xlsx"],
+        label_visibility="collapsed"
+    )
 
 if uploaded_asset_file is not None:
     with st.expander("📋 Preview & Import Uploaded Assets", expanded=True):
