@@ -1,0 +1,171 @@
+/* Google Font Import */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Base Styles */
+html,
+body,
+[class*="css"] {
+    font-family: 'Inter', sans-serif !important;
+    background-color: #0E1117;
+    color: #E2E8F0;
+}
+
+/* Sidebar Customization */
+[data-testid="stSidebar"] {
+    background-color: #1A1D24 !important;
+    border-right: 1px solid #2D333B;
+}
+
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2 {
+    color: #F8FAFC;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(90deg, #4ade80, #3b82f6);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Streamlit Navigation Links in Sidebar */
+[data-testid="stSidebarNav"] {
+    display: none;
+    /* Hide default nav if manual links are used */
+}
+
+/* Primary Button Styling */
+button[kind="primary"] {
+    background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 0.5rem 1rem !important;
+    font-weight: 500 !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3) !important;
+}
+
+button[kind="primary"]:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 8px -1px rgba(59, 130, 246, 0.4) !important;
+}
+
+/* Secondary Button Styling */
+button[kind="secondary"] {
+    background-color: #2D333B !important;
+    color: #E2E8F0 !important;
+    border: 1px solid #4B5563 !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+}
+
+button[kind="secondary"]:hover {
+    background-color: #374151 !important;
+    border-color: #6B7280 !important;
+    color: white !important;
+}
+
+/* Dataframes / Tables */
+[data-testid="stDataFrame"] {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #2D333B;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+/* Metric Cards Customization */
+[data-testid="metric-container"] {
+    background-color: #1A1D24;
+    border: 1px solid #2D333B;
+    border-radius: 12px;
+    padding: 1rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-testid="metric-container"]:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+    border-color: #3B82F6;
+}
+
+[data-testid="metric-container"] label {
+    color: #94A3B8 !important;
+    font-size: 0.9rem !important;
+    font-weight: 500 !important;
+}
+
+[data-testid="metric-container"] div[data-testid="stMetricValue"] {
+    color: #F8FAFC !important;
+    font-weight: 700 !important;
+    font-size: 1.8rem !important;
+}
+
+/* Inputs and Selectboxes */
+.stTextInput>div>div>input,
+.stSelectbox>div>div>div {
+    background-color: #1A1D24 !important;
+    color: #F8FAFC !important;
+    border: 1px solid #2D333B !important;
+    border-radius: 8px !important;
+    transition: border-color 0.2s ease !important;
+}
+
+.stTextInput>div>div>input:focus,
+.stSelectbox>div>div>div:focus {
+    border-color: #3B82F6 !important;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
+}
+
+/* Expanders */
+[data-testid="stExpander"] {
+    background-color: #1A1D24;
+    border: 1px solid #2D333B !important;
+    border-radius: 12px !important;
+    overflow: hidden;
+}
+
+[data-testid="stExpander"] summary {
+    background-color: #1E222A;
+    padding: 1rem !important;
+    font-weight: 600;
+}
+
+[data-testid="stExpander"] summary:hover {
+    background-color: #252A34;
+}
+
+/* Adjust title styles */
+h1 {
+    font-weight: 800 !important;
+    letter-spacing: -1px !important;
+    margin-bottom: 1.5rem !important;
+    color: #F8FAFC !important;
+}
+
+h2,
+h3 {
+    font-weight: 700 !important;
+    color: #E2E8F0 !important;
+    margin-top: 2rem !important;
+    margin-bottom: 1rem !important;
+}
+
+/* Tabs */
+[data-testid="stTabs"] button[role="tab"] {
+    font-weight: 600 !important;
+    color: #94A3B8 !important;
+    background-color: transparent !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    padding: 0.5rem 1rem !important;
+    transition: all 0.2s ease !important;
+}
+
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    color: #3B82F6 !important;
+    border-bottom-color: #3B82F6 !important;
+}
+
+[data-testid="stTabs"] button[role="tab"]:hover {
+    color: #F8FAFC !important;
+}

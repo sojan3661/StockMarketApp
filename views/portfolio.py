@@ -44,7 +44,6 @@ def get_stock_price(symbol):
     return None
 
 st.title("Portfolio Overview")
-st.write("A summary view of all your assets sorted by Sector, including Live Valuations.")
 
 # Verification check for credentials
 if not db.is_configured():
@@ -109,7 +108,6 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
             "Name": name,
             "Asset Type": "Stock" if is_equity else "Mutual Fund",
             "Listing": "Listed" if p.get("Listed", True) else "Unlisted",
-            "Target Allocation %": alloc,
             "Qty": qty,
             "Invested Amount": invested_amt,
             "% of Allocation": pct_allocation * 100,
@@ -118,6 +116,10 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
             "Current Value": current_value
         })
         
+    if not display_data:
+        return pd.DataFrame(columns=["Sector", "Symbol", "Name", "Asset Type", "Listing",
+                                     "Qty", "Invested Amount",
+                                     "% of Allocation", "Avg Buy", "Live Price", "Current Value"])
     df = pd.DataFrame(display_data)
     df = df.sort_values(by=["Sector", "Symbol"], ascending=[True, True])
     df = df.reset_index(drop=True)
@@ -146,12 +148,16 @@ else:
             st.divider()
             st.subheader(f"Assets for {port_name}")
             
-            # Filter stock targets for this specific portfolio
+            # Filter stock targets for this specific portfolio (only allocation > 0)
             port_stock_allocations = {
                 a["Symbol"]: a["Allocation"]
                 for a in db_stock_allocations
-                if a.get("Portfolio") == port_name and a.get("Symbol")
+                if a.get("Portfolio") == port_name and a.get("Symbol") and (a.get("Allocation") or 0) > 0
             }
+            
+            # Only show assets mapped to this portfolio in StockAllocation
+            mapped_symbols = set(port_stock_allocations.keys())
+            port_stocks = [s for s in db_stocks if s.get("Symbol") in mapped_symbols]
             
             # Filter open transactions for this specific portfolio
             port_open_transactions = [
@@ -163,12 +169,56 @@ else:
             port_alloc_tuple = tuple(port_stock_allocations.items())
             
             with st.spinner(f"Calculating live valuations for {port_name}..."):
-                df = get_portfolio_display_data(db_stocks, port_open_transactions, nav_df, port_alloc_tuple)
+                df = get_portfolio_display_data(port_stocks, port_open_transactions, nav_df, port_alloc_tuple)
             
             # If a portfolio has no open transactions and no asset allocations, it might be empty
             if df.empty or (df["Qty"].sum() == 0 and df["Target Allocation %"].sum() == 0):
                 st.info(f"No assets or allocations found for {port_name}.")
                 continue
+            
+            # Summary metrics
+            total_invested = df["Invested Amount"].sum()
+            total_current_value = df["Current Value"].sum()
+            gain_loss = total_current_value - total_invested
+            gain_loss_pct = (gain_loss / total_invested * 100) if total_invested > 0 else 0
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("💰 Total Invested", f"₹{total_invested:,.2f}")
+            m2.metric("📈 Current Value", f"₹{total_current_value:,.2f}")
+            m3.metric("📊 Gain / Loss", f"₹{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
+            
+            import plotly.graph_objects as go
+            import plotly.express as px
+            
+            st.divider()
+            
+            # Pie Chart: Stock vs Allocation (Invested Amount)
+            if not df.empty and df["Invested Amount"].sum() > 0:
+                st.subheader("Asset Allocation")
+                
+                # Filter out zero-investment rows for a cleaner pie chart
+                pie_df = df[df["Invested Amount"] > 0]
+                
+                fig_pie = go.Figure(go.Pie(
+                    labels=pie_df["Name"].tolist(),
+                    values=pie_df["Invested Amount"].tolist(),
+                    hole=0.4,
+                    marker_colors=px.colors.qualitative.Pastel,
+                    textinfo="label+percent",
+                    textposition="inside",
+                ))
+                
+                fig_pie.update_layout(
+                    showlegend=False,
+                    margin=dict(t=20, b=20, l=0, r=0),
+                    height=600,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color="#E2E8F0")
+                )
+                
+                st.plotly_chart(fig_pie, use_container_width=True)
+                st.divider()
             
             event = st.dataframe(
                 df,
@@ -180,7 +230,6 @@ else:
                 column_config={
                     "Symbol": None,
                     "Asset Type": None,
-                    "Target Allocation %": st.column_config.NumberColumn("Target \nAllocation %", format="%.2f%%"),
                     "Qty": st.column_config.NumberColumn("Current \nQty", format="%.4f"),
                     "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount", format="₹ %.2f"),
                     "% of Allocation": st.column_config.NumberColumn("% of \nAllocation", format="%.2f%%"),

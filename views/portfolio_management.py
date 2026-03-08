@@ -12,7 +12,6 @@ from Config.supabase_client import db
 
 
 st.title("Portfolio Rebalancing")
-st.write("Assign target allocations (percentages) to the specific stocks within each sector.")
 
 # -----------------------------
 # Supabase Check
@@ -162,13 +161,12 @@ for i, port_name in enumerate(portfolio_names):
         total_expected = plan_details.get("Current Invested Amount", 0) + (monthly_sip * months)
         
         # 3. Header
-        col1, col2, col3 = st.columns([3, 1, 1])
+        st.subheader(f"Asset Allocation for {port_name}")
+        col1, col2 = st.columns(2)
         with col1:
-            st.subheader(f"Asset Allocation for {port_name}")
+            st.metric("💰 Current Invested", f"₹{current_invested:,.2f}")
         with col2:
-            st.metric("Current Invested", f"₹{current_invested:,.2f}")
-        with col3:
-            st.metric("Expected Investment", f"₹{total_expected:,.2f}")
+            st.metric("🎯 Expected Investment", f"₹{total_expected:,.2f}")
             
             
         if not db_sectors:

@@ -37,10 +37,12 @@ else:
     available_symbols = sorted([p.get("Symbol", "") for p in db_stocks if p.get("Symbol", "")])
 
 # -----------------------------
-# Download Template Button
+# Bulk Upload Processing
 # -----------------------------
-def generate_transaction_template(portfolios) -> bytes:
+@st.cache_data
+def generate_transaction_template(portfolios, symbols) -> bytes:
     from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.utils import get_column_letter
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -49,30 +51,39 @@ def generate_transaction_template(portfolios) -> bytes:
     # Headers
     ws.append(["Portfolio", "Symbol", "Type", "Qty", "Avg", "Date"])
 
-    # Dropdown validation for the Type column (C2:C1000)
-    dv_type = DataValidation(
-        type="list",
-        formula1='"Buy,Sell"',
-        allow_blank=True,
-        showDropDown=False      # False = show the dropdown arrow in Excel
-    )
-    dv_type.sqref = "C2:C1000"
-    ws.add_data_validation(dv_type)
-    
-    # Dropdown validation for the Portfolio column (A2:A1000)
-    if portfolios:
-        # Excel data validation lists need to be comma separated strings, and under 255 chars usually. 
-        # Joining the list of portfolios.
-        port_string = ",".join(portfolios)
-        # Wrap in quotes for Excel formula
-        dv_port = DataValidation(
-            type="list",
-            formula1=f'"{port_string}"',
-            allow_blank=True,
-            showDropDown=False
-        )
+    # ── Hidden reference sheet for long dropdown lists ────────────────────────
+    ref_ws = wb.create_sheet("_Ref")
+    ref_ws.sheet_state = "hidden"
+
+    # Write portfolios to _Ref col A
+    for i, p in enumerate(portfolios, start=1):
+        ref_ws.cell(row=i, column=1, value=p)
+    port_range = f"_Ref!$A$1:$A${max(len(portfolios), 1)}" if portfolios else None
+
+    # Write symbols to _Ref col B
+    for i, s in enumerate(symbols, start=1):
+        ref_ws.cell(row=i, column=2, value=s)
+    sym_range = f"_Ref!$B$1:$B${max(len(symbols), 1)}" if symbols else None
+
+    # ── Portfolio dropdown (col A) ────────────────────────────────────────────
+    if port_range:
+        dv_port = DataValidation(type="list", formula1=port_range,
+                                 allow_blank=True, showDropDown=False)
         dv_port.sqref = "A2:A1000"
         ws.add_data_validation(dv_port)
+
+    # ── Symbol dropdown (col B) ───────────────────────────────────────────────
+    if sym_range:
+        dv_sym = DataValidation(type="list", formula1=sym_range,
+                                allow_blank=True, showDropDown=False)
+        dv_sym.sqref = "B2:B1000"
+        ws.add_data_validation(dv_sym)
+
+    # ── Type dropdown (col C) ─────────────────────────────────────────────────
+    dv_type = DataValidation(type="list", formula1='"Buy,Sell"',
+                             allow_blank=True, showDropDown=False)
+    dv_type.sqref = "C2:C1000"
+    ws.add_data_validation(dv_type)
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -80,12 +91,10 @@ def generate_transaction_template(portfolios) -> bytes:
 
 col_dl, col_ul, _ = st.columns([1, 1, 2])
 with col_dl:
-    st.download_button(
-        label="📥 Download Template",
-        data=generate_transaction_template(available_portfolios),
-        file_name="transaction_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    import base64
+    b64_data = base64.b64encode(generate_transaction_template(available_portfolios, available_symbols)).decode()
+    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}" download="transaction_template.xlsx" style="display: block; width: 100%; padding: 0.5rem 1rem; background-color: #2D333B; border: 1px solid #4B5563; color: #E2E8F0; text-align: center; text-decoration: none; border-radius: 8px; font-weight: 500; box-sizing: border-box; transition: background-color 0.2s;">📥 Download Template</a>'
+    st.markdown(href, unsafe_allow_html=True)
 
 with col_ul:
     uploaded_file = st.file_uploader(
@@ -168,10 +177,14 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"Error reading file: {e}")
 
-st.subheader("Transaction Details")
-
-# Ensure that user is aware that they need a Transactions table
-st.info("💡 Note: Ensure you have a `Transactions` table in Supabase with columns: `Symbol` (text), `Type` (text), `Quantity` (numeric), `Price` (numeric), and `Date` (date).")
+st.markdown(
+    """
+    <div style="background-color: #1E222A; padding: 15px 20px; border-radius: 8px 8px 0 0; border: 1px solid #2D333B; border-bottom: none; margin-top: 20px;">
+        <h3 style="margin: 0; color: #F8FAFC; font-size: 1.2rem;">📝 Transaction Details</h3>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 with st.form("add_transaction_form", clear_on_submit=False):
     col1, col2 = st.columns(2)

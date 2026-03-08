@@ -282,6 +282,49 @@ class SupabaseClient:
             st.error(f"Error updating stock: {e}")
             return False
 
+    def update_stock_symbol(self, old_symbol, new_symbol, name, is_equity, sector, is_listed, market_cap):
+        """
+        Updates a stock symbol by creating a new record and migrating dependent records
+        (Transactions, StockAllocations) to the new symbol, then deleting the old one.
+        Returns (success_bool, message).
+        """
+        headers = self._get_headers()
+        if not headers:
+             return False, "Not Configured"
+             
+        # 1. First, try to insert the new Symbol into StockManagement
+        insert_success = self.add_stock(new_symbol, name, is_equity, sector, is_listed, market_cap)
+        if not insert_success:
+             return False, f"Failed to create new symbol '{new_symbol}'. It may already exist."
+             
+        from urllib.parse import quote
+        safe_old_sym = quote(str(old_symbol).strip(), safe="")
+        safe_new_sym = str(new_symbol).strip()
+        
+        # 2. Update all referencing tables (Transactions)
+        tx_endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{safe_old_sym}"
+        try:
+             requests.patch(tx_endpoint, headers=headers, json={"Symbol": safe_new_sym})
+        except Exception as e:
+             # Attempt rollback
+             self.delete_stock(new_symbol)
+             return False, f"Error migrating transactions: {e}"
+             
+        # 3. Update all referencing tables (StockAllocation)
+        alloc_endpoint = f"{self.url}/rest/v1/StockAllocation?Symbol=eq.{safe_old_sym}"
+        try:
+             requests.patch(alloc_endpoint, headers=headers, json={"Symbol": safe_new_sym})
+        except Exception as e:
+             # Ideally we would rollback TX too, but REST API lacks multi-table transactions.
+             return False, f"Error migrating allocations: {e}"
+             
+        # 4. Finally, delete the old symbol
+        delete_success = self.delete_stock(old_symbol)
+        if not delete_success:
+             return True, f"Symbol migrated to {new_symbol}, but failed to delete old symbol {old_symbol}. Please delete it manually."
+             
+        return True, f"Successfully changed symbol from {old_symbol} to {new_symbol}."
+
 
     # ==========================================
     # ASSET ALLOCATION API METHODS

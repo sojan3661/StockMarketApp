@@ -55,8 +55,7 @@ def get_stock_price(symbol):
             pass
     return None
 
-st.title("Stock Management")
-st.write("Manage your stocks and mutual funds portfolio.")
+st.title("Asset Management")
 
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
@@ -77,7 +76,8 @@ nav_df = load_nav_data()
 if 'selected_mf' not in st.session_state:
     st.session_state.selected_mf = ""
 
-# ==================== Bulk Upload & Template ====================
+# ==================== Bulk Import ====================
+@st.cache_data
 def generate_asset_template(sectors) -> bytes:
     from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -101,7 +101,6 @@ def generate_asset_template(sectors) -> bytes:
     # Dropdown validation for Sector (E2:E1000)
     if sectors:
         sector_str = ",".join(sectors)
-        # Note: Excel formula limits apply here (~255 chars), but normally sector lists are small.
         dv_sector = DataValidation(type="list", formula1=f'"{sector_str}"', allow_blank=True, showDropDown=False)
         dv_sector.sqref = "E2:E1000"
         ws.add_data_validation(dv_sector)
@@ -119,13 +118,10 @@ st.subheader("Bulk Import Assets")
 col_dl, col_ul = st.columns([1, 1])
 
 with col_dl:
-    st.download_button(
-        label="📥 Download Asset Template",
-        data=generate_asset_template(existing_sectors),
-        file_name="asset_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    import base64
+    b64_data = base64.b64encode(generate_asset_template(existing_sectors)).decode()
+    href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}" download="asset_template.xlsx" style="display: block; width: 100%; padding: 0.5rem 1rem; background-color: #2D333B; border: 1px solid #4B5563; color: #E2E8F0; text-align: center; text-decoration: none; border-radius: 8px; font-weight: 500; box-sizing: border-box; transition: background-color 0.2s;">📥 Download Asset Template</a>'
+    st.markdown(href, unsafe_allow_html=True)
 
 with col_ul:
     uploaded_asset_file = st.file_uploader(
@@ -200,8 +196,8 @@ def search_mf_dialog():
             if matches.empty:
                 st.write("No matches found.")
             else:
-                st.write(f"Found {len(matches)} matches. Showing top 20:")
-                for idx, row in matches.head(20).iterrows():
+                st.write(f"Found {len(matches)} matches:")
+                for idx, row in matches.iterrows():
                     col_name, col_btn = st.columns([4, 1])
                     with col_name:
                         st.write(row['scheme_name'])
@@ -314,14 +310,27 @@ else:
 
         a_type   = "Stock" if is_eq else "Mutual Fund"
         l_status = "Listed" if is_lst else "Unlisted"
-
-        with st.expander(f"**{name}** ({sym}) — *{a_type} ({l_status})* | Cap: {mcap} | Sector: {sec}"):
+        
+        # Adding a visual tag for Asset type and Listing status
+        color_tag = "#3B82F6" if a_type == "Stock" else "#4ADE80"
+        
+        with st.expander(f"{name} ({sym}) — {mcap}"):
+            st.markdown(
+                f"""
+                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    <span style="background-color: {color_tag}20; color: {color_tag}; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">{a_type}</span>
+                    <span style="background-color: #4B556350; color: #9CA3AF; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{l_status}</span>
+                    <span style="background-color: #6366F120; color: #818CF8; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{sec}</span>
+                </div>
+                """, unsafe_allow_html=True
+            )
             tab_edit, tab_delete = st.tabs(["✏️ Edit", "🗑️ Delete"])
 
             with tab_edit:
                 with st.form(f"edit_form_{sym}"):
                     ec1, ec2 = st.columns(2)
                     with ec1:
+                        new_sym_input = st.text_input("Symbol", value=sym)
                         new_name = st.text_input("Name", value=name)
                         new_mcap = st.selectbox(
                             "Market Cap",
@@ -349,10 +358,33 @@ else:
                     if save_btn:
                         new_is_eq  = new_asset_type == "Stock"
                         new_is_lst = new_listing == "Listed"
-                        ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap)
-                        if ok:
-                            st.success(f"Updated '{sym}' successfully!")
-                            st.rerun()
+                        new_s = new_sym_input.strip()
+                        
+                        if not new_s or not new_name.strip():
+                            st.error("Symbol and Name cannot be empty.")
+                        elif new_s != sym:
+                            # Symbol has changed - Trigger migration
+                            with st.spinner(f"Migrating symbol from '{sym}' to '{new_s}'..."):
+                                success, msg = db.update_stock_symbol(
+                                    old_symbol=sym,
+                                    new_symbol=new_s,
+                                    name=new_name.strip(),
+                                    is_equity=new_is_eq,
+                                    sector=new_sector,
+                                    is_listed=new_is_lst,
+                                    market_cap=new_mcap
+                                )
+                            if success:
+                                st.success(msg)
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                        else:
+                            # Standard Update
+                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap)
+                            if ok:
+                                st.success(f"Updated '{sym}' successfully!")
+                                st.rerun()
 
             with tab_delete:
                 st.warning(f"Are you sure you want to delete **{name}** ({sym})? This cannot be undone.")
