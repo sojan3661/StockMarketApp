@@ -24,37 +24,13 @@ with st.spinner("Loading sectors..."):
 # Given there's only one column 'Sector', we extract those directly
 existing_names = [s.get('Sector', '').lower() for s in sectors_data]
 
-# ==================== Bulk Upload & Template ====================
-def generate_sector_template() -> bytes:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Sectors"
-
-    # Headers
-    ws.append(["Sector"])
-
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
-
+# ==================== Bulk Import ====================
 st.subheader("Bulk Import Sectors")
-col_dl, col_ul = st.columns([1, 1])
-
-with col_dl:
-    st.download_button(
-        label="📥 Download Sector Template",
-        data=generate_sector_template(),
-        file_name="sector_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-
-with col_ul:
-    uploaded_sector_file = st.file_uploader(
-        "Upload Sectors",
-        type=["xlsx"],
-        label_visibility="collapsed"
-    )
+uploaded_sector_file = st.file_uploader(
+    "Upload Sectors",
+    type=["xlsx"],
+    label_visibility="collapsed"
+)
 
 if uploaded_sector_file is not None:
     with st.expander("📋 Preview & Import Uploaded Sectors", expanded=True):
@@ -135,11 +111,18 @@ else:
         
         col_name, col_action = st.columns([4, 1])
         with col_name:
-            st.write(f"**{sector_name}**")
+            st.markdown(
+                f"""
+                <div style="background-color: #1A1D24; padding: 15px; border-radius: 8px; border: 1px solid #2D333B; margin-bottom: 10px;">
+                    <div style="font-weight: 600; font-size: 1.1rem; color: #F8FAFC;">{sector_name}</div>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
             
         with col_action:
-            if st.button("Delete", key=f"del_{sector_name}", use_container_width=True):
-                # Now passing the sector name to delete since there is no ID column
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) # alignments fix
+            if st.button("Delete", key=f"del_{sector_name}", type="primary", use_container_width=True):
                 success = db.delete_sector(sector_name)
                 if success:
                     st.success(f"Deleted '{sector_name}'.")

@@ -108,7 +108,6 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
             "Name": name,
             "Asset Type": "Stock" if is_equity else "Mutual Fund",
             "Listing": "Listed" if p.get("Listed", True) else "Unlisted",
-            "Target Allocation %": alloc,
             "Qty": qty,
             "Invested Amount": invested_amt,
             "% of Allocation": pct_allocation * 100,
@@ -119,7 +118,7 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
         
     if not display_data:
         return pd.DataFrame(columns=["Sector", "Symbol", "Name", "Asset Type", "Listing",
-                                     "Target Allocation %", "Qty", "Invested Amount",
+                                     "Qty", "Invested Amount",
                                      "% of Allocation", "Avg Buy", "Live Price", "Current Value"])
     df = pd.DataFrame(display_data)
     df = df.sort_values(by=["Sector", "Symbol"], ascending=[True, True])
@@ -188,7 +187,38 @@ else:
             m2.metric("📈 Current Value", f"₹{total_current_value:,.2f}")
             m3.metric("📊 Gain / Loss", f"₹{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
             
+            import plotly.graph_objects as go
+            import plotly.express as px
+            
             st.divider()
+            
+            # Pie Chart: Stock vs Allocation (Invested Amount)
+            if not df.empty and df["Invested Amount"].sum() > 0:
+                st.subheader("Asset Allocation")
+                
+                # Filter out zero-investment rows for a cleaner pie chart
+                pie_df = df[df["Invested Amount"] > 0]
+                
+                fig_pie = go.Figure(go.Pie(
+                    labels=pie_df["Name"].tolist(),
+                    values=pie_df["Invested Amount"].tolist(),
+                    hole=0.4,
+                    marker_colors=px.colors.qualitative.Pastel,
+                    textinfo="label+percent",
+                    textposition="inside",
+                ))
+                
+                fig_pie.update_layout(
+                    showlegend=False,
+                    margin=dict(t=20, b=20, l=0, r=0),
+                    height=600,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color="#E2E8F0")
+                )
+                
+                st.plotly_chart(fig_pie, use_container_width=True)
+                st.divider()
             
             event = st.dataframe(
                 df,
@@ -200,7 +230,6 @@ else:
                 column_config={
                     "Symbol": None,
                     "Asset Type": None,
-                    "Target Allocation %": st.column_config.NumberColumn("Target \nAllocation %", format="%.2f%%"),
                     "Qty": st.column_config.NumberColumn("Current \nQty", format="%.4f"),
                     "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount", format="₹ %.2f"),
                     "% of Allocation": st.column_config.NumberColumn("% of \nAllocation", format="%.2f%%"),

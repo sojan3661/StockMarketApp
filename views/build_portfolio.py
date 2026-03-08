@@ -101,10 +101,15 @@ else:
         expected_investment = inv_amt + (sip_amt * months)
         
         # UI Expanders for each plan to keep layout clean
-        with st.expander(
-            f"📁 {port_id} - Invested: ₹{inv_amt:,.2f} | Expected: ₹{expected_investment:,.2f}", 
-            expanded=False
-        ):
+        with st.expander(f"{port_id}", expanded=False):
+            st.markdown(
+                f"""
+                <div style="display: flex; gap: 15px; margin-bottom: 15px; color: #9CA3AF;">
+                    <span style="background-color: #3B82F620; color: #60A5FA; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Invested: ₹{inv_amt:,.2f}</span>
+                    <span style="background-color: #10B98120; color: #34D399; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Expected: ₹{expected_investment:,.2f}</span>
+                </div>
+                """, unsafe_allow_html=True
+            )
             # Using tabs to separate Edit and Delete actions
             tab_edit, tab_delete = st.tabs(["✏️ Edit Plan", "🗑️ Delete Plan"])
             

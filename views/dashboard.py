@@ -20,7 +20,7 @@ if not db.is_configured():
     st.stop()
 
 # Cache bust button
-if st.button("🔄 Refresh Prices", help="Reload live prices from NSE"):
+if st.button("🔄 Refresh Data", help="Reload live prices from NSE"):
     for k in list(st.session_state.keys()):
         if k.startswith("port_df_"):
             del st.session_state[k]
@@ -204,9 +204,14 @@ def render_investment_bar(bar_df):
         barmode="group",
         yaxis_title="Amount (₹)",
         xaxis_title="Portfolio",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E2E8F0")),
         margin=dict(t=60, b=40),
         height=420,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color="#E2E8F0"),
+        xaxis=dict(gridcolor="#2D333B"),
+        yaxis=dict(gridcolor="#2D333B")
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -289,7 +294,10 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
             fig.update_layout(
                 showlegend=False,
                 margin=dict(t=20, b=20, l=0, r=0),
-                height=420
+                height=420,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#E2E8F0")
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -319,7 +327,10 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 fig_d.update_layout(
                     showlegend=False,
                     margin=dict(t=20, b=20, l=0, r=0),
-                    height=420
+                    height=420,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color="#E2E8F0")
                 )
                 st.plotly_chart(fig_d, use_container_width=True)
 
@@ -418,10 +429,15 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 barmode="group",
                 yaxis_title="Amount (₹)",
                 xaxis_title="Stock",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E2E8F0")),
                 margin=dict(t=60, b=80),
                 height=450,
-                xaxis_tickangle=-35
+                xaxis_tickangle=-35,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#E2E8F0"),
+                xaxis=dict(gridcolor="#2D333B"),
+                yaxis=dict(gridcolor="#2D333B")
             )
             st.plotly_chart(fig_s, use_container_width=True)
 

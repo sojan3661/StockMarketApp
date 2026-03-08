@@ -51,64 +51,13 @@ for alloc in allocations_data:
             "Allocation": alloc.get("Allocation", 0.0)
         }
 
-# ==================== Bulk Upload & Template ====================
-def generate_allocation_template(portfolios, sectors) -> bytes:
-    from openpyxl.worksheet.datavalidation import DataValidation
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Allocations"
-
-    # Headers
-    ws.append(["Portfolio", "Sector", "Allocation %"])
-
-    # Dropdown validation for Portfolio (A2:A1000)
-    if portfolios:
-        port_str = ",".join(portfolios)
-        dv_port = DataValidation(type="list", formula1=f'"{port_str}"', allow_blank=False, showDropDown=False)
-        dv_port.sqref = "A2:A1000"
-        ws.add_data_validation(dv_port)
-
-    # Dropdown validation for Sector (B2:B1000)
-    if sectors:
-        sector_names = [s.get("Sector") for s in sectors if s.get("Sector")]
-        if sector_names:
-            sector_str = ",".join(sector_names)
-            dv_sector = DataValidation(type="list", formula1=f'"{sector_str}"', allow_blank=False, showDropDown=False)
-            dv_sector.sqref = "B2:B1000"
-            ws.add_data_validation(dv_sector)
-
-    # Number validation for Allocation (C2:C1000)
-    dv_alloc = DataValidation(type="decimal", operator="between", formula1="0.0", formula2="100.0", allow_blank=False)
-    dv_alloc.error = 'Allocation must be between 0 and 100'
-    dv_alloc.errorTitle = 'Invalid Allocation'
-    dv_alloc.prompt = 'Enter a percentage from 0 to 100 (e.g., 12.5)'
-    dv_alloc.promptTitle = 'Allocation %'
-    dv_alloc.sqref = "C2:C1000"
-    ws.add_data_validation(dv_alloc)
-
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
-
+# ==================== Bulk Import ====================
 st.subheader("Bulk Import Allocations")
-col_dl, col_ul = st.columns([1, 1])
-
-with col_dl:
-    st.download_button(
-        label="📥 Download Allocation Template",
-        data=generate_allocation_template(portfolio_names, sectors_data),
-        file_name="sector_allocation_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-
-with col_ul:
-    uploaded_alloc_file = st.file_uploader(
-        "Upload Allocations",
-        type=["xlsx"],
-        label_visibility="collapsed"
-    )
+uploaded_alloc_file = st.file_uploader(
+    "Upload Allocations",
+    type=["xlsx"],
+    label_visibility="collapsed"
+)
 
 if uploaded_alloc_file is not None:
     with st.expander("📋 Preview & Import Uploaded Allocations", expanded=True):
@@ -257,11 +206,22 @@ for i, port_name in enumerate(portfolio_names):
         total_allocation = edited_df["Allocation"].sum()
         
         if total_allocation > 100.0:
-            st.error(f"Total Allocation is {total_allocation:.2f}%. It should not exceed 100%.")
+            msg_color = "#EF4444"
+            msg = f"Total Allocation is {total_allocation:.2f}%. It should not exceed 100%."
         elif total_allocation < 100.0:
-            st.warning(f"Total Allocation is {total_allocation:.2f}%. You still have {100.0 - total_allocation:.2f}% to allocate.")
+            msg_color = "#F59E0B"
+            msg = f"Total Allocation is {total_allocation:.2f}%. You still have {100.0 - total_allocation:.2f}% to allocate."
         else:
-            st.success(f"Total Allocation is perfectly {total_allocation:.2f}%!")
+            msg_color = "#10B981"
+            msg = f"Total Allocation is perfectly {total_allocation:.2f}%!"
+            
+        st.markdown(
+            f"""
+            <div style="background-color: {msg_color}15; border-left: 4px solid {msg_color}; padding: 12px 15px; border-radius: 4px; margin: 15px 0;">
+                <span style="color: {msg_color}; font-weight: 600;">{msg}</span>
+            </div>
+            """, unsafe_allow_html=True
+        )
             
         # Display save button for this specific portfolio
         # Using a unique key for the button
