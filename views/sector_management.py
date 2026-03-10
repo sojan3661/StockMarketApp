@@ -121,14 +121,34 @@ st.divider()
 # ==================== Existing Sectors ====================
 st.subheader("Current Sectors / Themes")
 
+@st.dialog("Rename Sector")
+def rename_sector_dialog(old_name):
+    new_name = st.text_input("New Sector Name", value=old_name)
+    if st.button("💾 Save Changes", type="primary"):
+        new_name = new_name.strip()
+        if not new_name:
+            st.error("Name cannot be empty.")
+        elif new_name.lower() == old_name.lower():
+            st.info("No changes made.")
+            st.rerun()
+        elif new_name.lower() in existing_names:
+            st.error(f"Sector '{new_name}' already exists.")
+        else:
+            with st.spinner(f"Renaming '{old_name}' to '{new_name}' and migrating data..."):
+                success, msg = db.update_sector_name(old_name, new_name)
+            if success:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
 if not sectors_data:
     st.info("No sectors found in the database. Use the form above to add your first sector!")
 else:
     for item in sectors_data:
-        # The only column available is 'Sector'
         sector_name = item.get("Sector", "Unknown Sector")
         
-        col_name, col_action = st.columns([4, 1])
+        col_name, col_edit, col_del = st.columns([3, 1, 1])
         with col_name:
             st.markdown(
                 f"""
@@ -139,9 +159,14 @@ else:
                 unsafe_allow_html=True
             )
             
-        with col_action:
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) # alignments fix
-            if st.button("Delete", key=f"del_{sector_name}", type="primary", use_container_width=True):
+        with col_edit:
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) 
+            if st.button("✏️ Edit", key=f"edit_{sector_name}", use_container_width=True):
+                rename_sector_dialog(sector_name)
+
+        with col_del:
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) 
+            if st.button("🗑️ Delete", key=f"del_{sector_name}", type="primary", use_container_width=True):
                 success = db.delete_sector(sector_name)
                 if success:
                     st.success(f"Deleted '{sector_name}'.")

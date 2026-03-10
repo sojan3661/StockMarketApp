@@ -106,6 +106,45 @@ class SupabaseClient:
             st.error(f"Error deleting sector: {e}")
             return False
 
+    def update_sector_name(self, old_name, new_name):
+        """
+        Renames a sector by:
+        1. Creating a new sector record
+        2. Updating StockManagement and SectorAllocation records
+        3. Deleting the old sector record
+        """
+        headers = self._get_headers()
+        if not headers:
+            return False, "Not configured"
+
+        # 1. Create new sector
+        if not self.add_sector(new_name):
+            return False, f"Failed to create new sector '{new_name}'"
+
+        from urllib.parse import quote
+        safe_old = quote(str(old_name).strip(), safe="")
+
+        # 2. Update StockManagement
+        stock_endpoint = f"{self.url}/rest/v1/StockManagement?Sector=eq.{safe_old}"
+        try:
+            requests.patch(stock_endpoint, headers=headers, json={"Sector": new_name})
+        except Exception as e:
+            st.error(f"Error migrating stocks: {e}")
+            # Partial failure, but keep going for allocations
+
+        # 3. Update SectorAllocation
+        alloc_endpoint = f"{self.url}/rest/v1/SectorAllocation?Sector=eq.{safe_old}"
+        try:
+            requests.patch(alloc_endpoint, headers=headers, json={"Sector": new_name})
+        except Exception as e:
+            st.error(f"Error migrating allocations: {e}")
+
+        # 4. Delete old sector
+        if not self.delete_sector(old_name):
+            return True, f"Sector renamed to {new_name}, but failed to delete old record '{old_name}'."
+
+        return True, f"Successfully renamed sector from '{old_name}' to '{new_name}'."
+
     # ==========================================
     # SECTOR ALLOCATION API METHODS
     # ==========================================
@@ -198,7 +237,7 @@ class SupabaseClient:
             st.error(f"Error fetching stocks: {e}")
             return []
 
-    def add_stock(self, symbol, name, is_equity, sector, is_listed=True, market_cap="NA"):
+    def add_stock(self, symbol, name, is_equity, sector, is_listed=True, market_cap="NA", ltp=None):
         """Adds a new stock to the StockManagement table."""
         headers = self._get_headers()
         if not headers:
@@ -211,7 +250,8 @@ class SupabaseClient:
             "Equity": is_equity,
             "Sector": sector,
             "Listed": is_listed,
-            "MarketCap": market_cap
+            "MarketCap": market_cap,
+            "LTP": ltp
         }
         
         try:
@@ -250,7 +290,7 @@ class SupabaseClient:
             st.error(f"Error deleting stock: {e}")
             return False
 
-    def update_stock(self, symbol, name, is_equity, sector, is_listed, market_cap):
+    def update_stock(self, symbol, name, is_equity, sector, is_listed, market_cap, ltp=None):
         """Updates an existing stock record in StockManagement by Symbol (primary key)."""
         headers = self._get_headers()
         if not headers:
@@ -265,7 +305,8 @@ class SupabaseClient:
             "Equity": is_equity,
             "Sector": sector,
             "Listed": is_listed,
-            "MarketCap": market_cap
+            "MarketCap": market_cap,
+            "LTP": ltp
         }
 
         try:
@@ -282,7 +323,7 @@ class SupabaseClient:
             st.error(f"Error updating stock: {e}")
             return False
 
-    def update_stock_symbol(self, old_symbol, new_symbol, name, is_equity, sector, is_listed, market_cap):
+    def update_stock_symbol(self, old_symbol, new_symbol, name, is_equity, sector, is_listed, market_cap, ltp=None):
         """
         Updates a stock symbol by creating a new record and migrating dependent records
         (Transactions, StockAllocations) to the new symbol, then deleting the old one.
@@ -293,7 +334,7 @@ class SupabaseClient:
              return False, "Not Configured"
              
         # 1. First, try to insert the new Symbol into StockManagement
-        insert_success = self.add_stock(new_symbol, name, is_equity, sector, is_listed, market_cap)
+        insert_success = self.add_stock(new_symbol, name, is_equity, sector, is_listed, market_cap, ltp)
         if not insert_success:
              return False, f"Failed to create new symbol '{new_symbol}'. It may already exist."
              

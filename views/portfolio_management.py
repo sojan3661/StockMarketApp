@@ -212,7 +212,10 @@ for i, port_name in enumerate(portfolio_names):
                         
                         # Price
                         if p.get("Equity", True):
-                            price = get_stock_price(sym)
+                            if p.get("Listed", True):
+                                price = get_stock_price(sym)
+                            else:
+                                price = float(p.get("LTP") or 0.0)
                         else:
                             price = get_nav(nav_df, name)
                             
