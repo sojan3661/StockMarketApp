@@ -99,6 +99,8 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
             else:
                 fetched_nav = get_nav(nav_df, name)
                 live_price = float(fetched_nav) if fetched_nav is not None else 0.0
+        else:
+            live_price = float(p.get("LTP") or 0.0)
         
         current_value = qty * live_price
         

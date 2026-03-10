@@ -101,7 +101,7 @@ def live_price(stock_info):
     is_eq    = stock_info.get("Equity", True)
     is_lst   = stock_info.get("Listed", True)
     if not is_lst:
-        return 0.0
+        return float(stock_info.get("LTP") or 0.0)
     if is_eq:
         return get_stock_price(sym)
     return get_nav(nav_df, name)

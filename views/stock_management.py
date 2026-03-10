@@ -86,7 +86,7 @@ def generate_asset_template(sectors) -> bytes:
     ws.title = "Assets"
 
     # Headers
-    ws.append(["Name", "Symbol", "Asset Type", "Market Cap", "Sector", "Listing Status"])
+    ws.append(["Name", "Symbol", "Asset Type", "Market Cap", "Sector", "Listing Status", "LTP"])
 
     # Dropdown validation for Asset Type (C2:C1000)
     dv_type = DataValidation(type="list", formula1='"Stock,Mutual Fund"', allow_blank=False, showDropDown=False)
@@ -155,6 +155,11 @@ if uploaded_asset_file is not None:
                         cap    = str(row.get("Market Cap", "NA")).strip()
                         sec    = str(row.get("Sector", "NA")).strip()
                         l_stat = str(row.get("Listing Status", "Listed")).strip()
+                        ltp_val = row.get("LTP")
+                        try:
+                            ltp = float(ltp_val) if pd.notna(ltp_val) else None
+                        except:
+                            ltp = None
                         
                         if not name or not sym or pd.isna(name) or pd.isna(sym):
                             st.warning(f"Row {i+2}: Missing Name or Symbol — skipped.")
@@ -170,7 +175,7 @@ if uploaded_asset_file is not None:
                         is_eq = True if a_type == "Stock" else False
                         is_lst = True if l_stat == "Listed" or not is_eq else False
                         
-                        ok = db.add_stock(sym, name, is_eq, sec, is_lst, cap)
+                        ok = db.add_stock(sym, name, is_eq, sec, is_lst, cap, ltp)
                         if ok:
                             success_count += 1
                             existing_symbols.append(sym) # add to local cache to prevent duplicates within same sheet
@@ -235,11 +240,13 @@ with st.form("add_asset_form", clear_on_submit=False):
             market_cap_options = ["Large Cap", "Mid Cap", "Small Cap", "ETF", "Multi Cap", "NA"]
             market_cap = st.selectbox("Market Cap / Category", options=market_cap_options, index=5)
         
-    with col2:
-        if existing_sectors:
-            sector_choice = st.selectbox("Sector", options=existing_sectors)
+        if asset_type == "Stock":
+            if listing_status == "Unlisted":
+                stock_ltp = st.number_input("Last Traded Price (LTP)", min_value=0.0, step=0.1, help="Manual LTP for unlisted stocks")
+            else:
+                stock_ltp = None
         else:
-            sector_choice = st.text_input("Sector (No DB sectors found)")
+            stock_ltp = None
 
     # Submission
     submitted = st.form_submit_button("Preview & Add Asset", type="primary")
@@ -282,7 +289,7 @@ if submitted:
 
         # 2. Insert to DB
         if price_preview_success:
-            success = db.add_stock(stock_symbol, stock_name, is_equity, sector_choice, is_listed, market_cap)
+            success = db.add_stock(stock_symbol, stock_name, is_equity, sector_choice, is_listed, market_cap, stock_ltp)
             if success:
                 st.success(f"Successfully added: {stock_name} ({stock_symbol})")
                 if asset_type == "Mutual Fund":
@@ -310,6 +317,7 @@ else:
 
         a_type   = "Stock" if is_eq else "Mutual Fund"
         l_status = "Listed" if is_lst else "Unlisted"
+        ltp      = item.get("LTP")
         
         # Adding a visual tag for Asset type and Listing status
         color_tag = "#3B82F6" if a_type == "Stock" else "#4ADE80"
@@ -321,6 +329,7 @@ else:
                     <span style="background-color: {color_tag}20; color: {color_tag}; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">{a_type}</span>
                     <span style="background-color: #4B556350; color: #9CA3AF; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{l_status}</span>
                     <span style="background-color: #6366F120; color: #818CF8; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{sec}</span>
+                    {f'<span style="background-color: #F59E0B20; color: #F59E0B; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">LTP: ₹{ltp}</span>' if ltp is not None else ''}
                 </div>
                 """, unsafe_allow_html=True
             )
@@ -343,6 +352,11 @@ else:
                             options=existing_sectors,
                             index=existing_sectors.index(sec) if sec in existing_sectors else 0
                         )
+                        if not is_lst or is_eq: # Simple check to always show or only if unlisted
+                             new_ltp = st.number_input("Last Traded Price (LTP)", value=float(ltp or 0.0), min_value=0.0, step=0.1, key=f"ltp_edit_{sym}")
+                        else:
+                             new_ltp = None
+                             
                         new_asset_type = st.selectbox(
                             "Asset Type",
                             options=["Stock", "Mutual Fund"],
@@ -372,7 +386,8 @@ else:
                                     is_equity=new_is_eq,
                                     sector=new_sector,
                                     is_listed=new_is_lst,
-                                    market_cap=new_mcap
+                                    market_cap=new_mcap,
+                                    ltp=new_ltp
                                 )
                             if success:
                                 st.success(msg)
@@ -381,7 +396,7 @@ else:
                                 st.error(msg)
                         else:
                             # Standard Update
-                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap)
+                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap, new_ltp)
                             if ok:
                                 st.success(f"Updated '{sym}' successfully!")
                                 st.rerun()
