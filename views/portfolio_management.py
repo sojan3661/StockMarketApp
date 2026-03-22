@@ -162,12 +162,16 @@ for i, port_name in enumerate(portfolio_names):
         
         # 3. Header
         st.subheader(f"Asset Allocation for {port_name}")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("💰 Current Invested", f"₹{current_invested:,.2f}")
-        with col2:
-            st.metric("🎯 Expected Investment", f"₹{total_expected:,.2f}")
             
+        expected_metric_placeholder = col2.empty()
+        inflow_metric_placeholder = col3.empty()
+            
+        show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
+        
+        total_inflow = 0
             
         if not db_sectors:
             st.info("No sectors found!")
@@ -222,6 +226,9 @@ for i, port_name in enumerate(portfolio_names):
                         # Asset target expected = Total * Sector % * Asset %
                         expected = total_expected * (target_alloc/100) * (alloc/100)
                         inflow = max(0, expected - invested)
+                        
+                        total_inflow += inflow
+                        
                         buy = math.ceil(inflow/price) if price > 0 else 0
                         
                         rows.append({
@@ -238,8 +245,24 @@ for i, port_name in enumerate(portfolio_names):
                         
                     df = pd.DataFrame(rows)
                     
+                    display_df = df[df["Inflow"] > 0] if show_only_inflow else df
+                    
+                    if display_df.empty:
+                        # Validate the full sector and retain current allocations even if not displayed
+                        sector_sum = df["Allocation %"].sum()
+                        if sector_sum > 100:
+                            st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
+                        else:
+                            st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
+                            
+                        updates = df[["Symbol", "Name", "Allocation %"]].rename(
+                            columns={"Allocation %": "Allocation"}
+                        )
+                        master_updates.extend(updates.to_dict("records"))
+                        continue
+                    
                     edited_df = st.data_editor(
-                        df,
+                        display_df,
                         key=f"editor_{port_name}_{sector_name}", # Need composite key to avoid conflicts across tabs
                         hide_index=True,
                         use_container_width=True,
@@ -261,17 +284,23 @@ for i, port_name in enumerate(portfolio_names):
                         ]
                     )
                     
+                    df.update(edited_df)
+                    
                     # Allocation validation
-                    sector_sum = edited_df["Allocation %"].sum()
+                    sector_sum = df["Allocation %"].sum()
                     if sector_sum > 100:
                         st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
                     else:
                         st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
                         
-                    updates = edited_df[["Symbol", "Name", "Allocation %"]].rename(
+                    updates = df[["Symbol", "Name", "Allocation %"]].rename(
                         columns={"Allocation %": "Allocation"}
                     )
                     master_updates.extend(updates.to_dict("records"))
+            
+            displayed_expected_investment = current_invested + total_inflow
+            expected_metric_placeholder.metric("🎯 Expected Investment", f"₹{displayed_expected_investment:,.2f}")
+            inflow_metric_placeholder.metric("💵 Total Inflow", f"₹{total_inflow:,.2f}")
             
             st.divider()
             submitted = st.form_submit_button(

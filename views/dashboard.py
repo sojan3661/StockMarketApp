@@ -9,9 +9,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
 
 try:
-    from nsepython import nse_eq
+    from nsepython import nse_eq, index_pe_pb_div
 except ImportError:
     nse_eq = None
+    index_pe_pb_div = None
+
+from datetime import datetime, timedelta
 
 st.title("Dashboard")
 
@@ -51,13 +54,42 @@ def get_nav(nav_df, fund_name):
 
 
 @st.cache_data(ttl=600)
-def get_stock_price(symbol):
+def get_stock_info(symbol):
+    """Returns (price, pe_ratio) for a stock."""
     if nse_eq:
         try:
-            q = nse_eq(symbol)
-            return float(q["priceInfo"]["lastPrice"])
+            quote = nse_eq(symbol)
+            price = float(quote["priceInfo"]["lastPrice"])
+            pe = None
+            if 'metadata' in quote:
+                md = quote['metadata']
+                # Try multiple possible keys for PE
+                pe = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe')
+                if pe is not None:
+                    pe = float(pe)
+            return price, pe
         except Exception:
             pass
+    return 0.0, None
+
+
+@st.cache_data(ttl=86400) # Cache for 24 hours
+def get_index_pe(index_name):
+    """Fetches the latest PE for an index using nsepython."""
+    if not index_pe_pb_div:
+        return 0.0
+    try:
+        # Fetch last 10 days to ensure we get a valid record
+        end = datetime.now().strftime('%d-%b-%Y')
+        start = (datetime.now() - timedelta(days=10)).strftime('%d-%b-%Y')
+        df = index_pe_pb_div(index_name, start, end)
+        if df is not None and not df.empty:
+            # Column is 'pe' (lowercase) in recent nsepython versions
+            latest_pe = df.iloc[0].get('pe') or df.iloc[0].get('PE')
+            if latest_pe is not None:
+                return float(latest_pe)
+    except Exception:
+        pass
     return 0.0
 
 
@@ -101,10 +133,10 @@ def live_price(stock_info):
     is_eq    = stock_info.get("Equity", True)
     is_lst   = stock_info.get("Listed", True)
     if not is_lst:
-        return float(stock_info.get("LTP") or 0.0)
+        return float(stock_info.get("LTP") or 0.0), None
     if is_eq:
-        return get_stock_price(sym)
-    return get_nav(nav_df, name)
+        return get_stock_info(sym)
+    return get_nav(nav_df, name), None
 
 
 def build_portfolio_df(port_name):
@@ -133,7 +165,7 @@ def build_portfolio_df(port_name):
         agg          = tx_agg.get((port_name, sym), {"Qty": 0.0, "InvestedTotal": 0.0})
         qty          = agg["Qty"]
         invested     = agg["InvestedTotal"]
-        price        = live_price(stock_info)
+        price, pe    = live_price(stock_info)
         curr_val     = qty * price
         s_alloc_pct  = sector_alloc_pct.get(sector, 0.0)
         rows.append({
@@ -146,12 +178,13 @@ def build_portfolio_df(port_name):
             "Qty":              qty,
             "Invested":         invested,
             "Live Price":       price,
+            "PE Ratio":         pe,
             "Current Value":    curr_val,
         })
 
     if not rows:
         return pd.DataFrame(columns=["Sector","Symbol","Name","Target Alloc %","Sector Alloc %",
-                                     "Qty","Invested","Live Price","Current Value"])
+                                     "Qty","Invested","Live Price", "PE Ratio", "Current Value"])
     return pd.DataFrame(rows).sort_values(["Sector","Symbol"]).reset_index(drop=True)
 
 
@@ -244,6 +277,10 @@ def sector_invested_df(port_name=None):
 def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expected=0.0,
                            total_expected=0.0, port_expected_map=None):
     """Render metrics + bar + pie + stock bar + table for a given portfolio df."""
+    # Ensure PE Ratio exists to handle stale session data
+    if "PE Ratio" not in df.columns:
+        df["PE Ratio"] = None
+
     total_invested    = df["Invested"].sum()
     total_curr_val    = df["Current Value"].sum()
     gain_loss         = total_curr_val - total_invested
@@ -254,6 +291,32 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     m2.metric("🎯 Expected Investment",  f"₹{metric_expected:,.2f}")
     m3.metric("📈 Current Value",        f"₹{total_curr_val:,.2f}")
     m4.metric("📊 Gain / Loss",          f"₹{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
+
+    # ---- PE Ratio Metrics ----
+    # Calculate Average PE Ratio (Exclude DEBT and ETF/INDEX FUND)
+    pe_filtered = df[
+        (df["PE Ratio"].notnull()) & 
+        (~df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
+    ]
+    avg_pe = pe_filtered["PE Ratio"].mean() if not pe_filtered.empty else 0.0
+
+    st.markdown("### 📊 Valuation & Index Comparison")
+    
+    # Fetch Index PEs
+    niphy_pe = get_index_pe("NIFTY 50")
+    bank_pe = get_index_pe("NIFTY BANK")
+
+    col_pe1, col_pe2 = st.columns([1, 2])
+    with col_pe1:
+        st.metric("🎯 Portfolio Avg PE", f"{avg_pe:.2f}")
+    
+    with col_pe2:
+        index_data = {
+            "Index": ["NIFTY 50", "NIFTY BANK"],
+            "Current PE": [f"{niphy_pe:.2f}" if niphy_pe > 0 else "N/A", 
+                           f"{bank_pe:.2f}" if bank_pe > 0 else "N/A"]
+        }
+        st.table(pd.DataFrame(index_data))
 
     st.divider()
 
@@ -372,6 +435,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 "Qty":              st.column_config.NumberColumn("Qty", format="%.4f"),
                 "Invested":         st.column_config.NumberColumn("Invested", format="₹ %.2f"),
                 "Live Price":       st.column_config.NumberColumn("Live Price", format="₹ %.2f"),
+                "PE Ratio":         st.column_config.NumberColumn("PE Ratio", format="%.2f"),
                 "Current Value":    st.column_config.NumberColumn("Current Value", format="₹ %.2f"),
             }
         )
