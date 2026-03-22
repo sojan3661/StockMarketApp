@@ -4,6 +4,7 @@ import io
 import sys
 import os
 import openpyxl
+import time
 
 # Add the app root directory to Python path to allow imports from Config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -21,6 +22,7 @@ if not db.is_configured():
 with st.spinner("Loading available assets & portfolios..."):
     db_stocks = db.fetch_stocks()
     db_investment_plan = db.fetch_investment_plan()
+    open_transactions = db.fetch_open_transactions()
     
 # Create a list of available portfolios
 if not db_investment_plan:
@@ -186,54 +188,86 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-with st.form("add_transaction_form", clear_on_submit=False):
+# Use a standard container instead of a form to allow dynamic UI updates like Sell All
+if "tx_form_key" not in st.session_state:
+    st.session_state["tx_form_key"] = 0
+    
+container = st.container()
+
+with container:
     col1, col2 = st.columns(2)
 
     with col1:
         selected_portfolio = st.selectbox(
             "Portfolio", 
             options=available_portfolios,
-            help="Select the portfolio this transaction belongs to."
+            help="Select the portfolio this transaction belongs to.",
+            key=f"port_{st.session_state['tx_form_key']}"
         )
         
         selected_symbol = st.selectbox(
             "Asset Symbol", 
             options=available_symbols,
-            help="Select an asset you've already added via Stock Management."
+            help="Select an asset you've already added via Stock Management.",
+            key=f"sym_{st.session_state['tx_form_key']}"
         )
-        
+
+    with col2:
         transaction_type = st.radio(
             "Transaction Type",
             options=["Buy", "Sell"],
-            horizontal=True
+            horizontal=True,
+            key=f"type_{st.session_state['tx_form_key']}"
+        )
+        
+        sell_all = False
+        current_qty = 0.0
+        if transaction_type == "Sell" and open_transactions:
+            current_qty = sum(
+                float(tx.get("Qty", 0))
+                for tx in open_transactions
+                if tx.get("Portfolio") == selected_portfolio and tx.get("Symbol") == selected_symbol
+            )
+            if current_qty > 0:
+                sell_all = st.checkbox(f"Sell All ({current_qty:.4f} available)", key=f"sell_{st.session_state['tx_form_key']}")
+
+    with col1:
+        qty_key = f"qty_{st.session_state['tx_form_key']}"
+        if qty_key not in st.session_state:
+            st.session_state[qty_key] = 1.0
+            
+        if sell_all and current_qty > 0:
+            st.session_state[qty_key] = float(current_qty)
+            
+        quantity = st.number_input(
+            "Quantity",
+            min_value=0.0001, # Allows partial shares/units
+            step=1.0,
+            format="%.4f",
+            help="Number of shares or mutual fund units.",
+            disabled=sell_all,
+            key=qty_key
         )
         
         transaction_date = st.date_input(
             "Transaction Date",
-            value=datetime.date.today()
+            value=datetime.date.today(),
+            key=f"date_{st.session_state['tx_form_key']}"
         )
         
     with col2:
-        quantity = st.number_input(
-            "Quantity",
-            min_value=0.01, # Allows partial shares/units
-            value=1.0,
-            step=1.0,
-            format="%.4f",
-            help="Number of shares or mutual fund units."
-        )
-        
         price = st.number_input(
             "Price per unit (₹)",
             min_value=0.01,
             value=100.0,
             step=1.0,
             format="%.2f",
-            help="The price at which the asset was bought or sold."
+            help="The price at which the asset was bought or sold.",
+            key=f"price_{st.session_state['tx_form_key']}"
         )
 
     # Submission
-    submitted = st.form_submit_button("💾 Save Transaction", type="primary")
+    submitted = st.button("💾 Save Transaction", type="primary", use_container_width=False)
 
 if submitted:
     if not available_symbols:
@@ -264,3 +298,6 @@ if submitted:
             
         if success:
             st.success(f"Successfully recorded {transaction_type} of {quantity} {selected_symbol} @ ₹{price}")
+            time.sleep(1.5)
+            st.session_state["tx_form_key"] += 1
+            st.rerun()
