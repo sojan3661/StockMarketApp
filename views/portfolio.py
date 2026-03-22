@@ -33,15 +33,23 @@ def get_nav(nav_df, fund_name):
     result = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav","date"]]
     return result.iloc[0]["nav"] if not result.empty else None
 
-def get_stock_price(symbol):
+def get_stock_info(symbol):
     if nse_eq:
         try:
             quote = nse_eq(symbol)
+            price = None
+            pe = None
+            
             if 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
-                return float(quote['priceInfo']['lastPrice'])
+                price = float(quote['priceInfo']['lastPrice'])
+            
+            if 'metadata' in quote and 'pdSymbolPe' in quote['metadata']:
+                pe = float(quote['metadata']['pdSymbolPe'])
+                
+            return price, pe
         except Exception:
             pass
-    return None
+    return None, None
 
 st.title("Portfolio Overview")
 
@@ -90,12 +98,14 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
         pct_allocation = (invested_amt / total_invested_portfolio) if total_invested_portfolio > 0 else 0.0
         
         live_price = 0.0
+        pe_ratio = None
         is_listed = p.get("Listed", True)
         
         if is_listed:
             if is_equity:
-                fetched_price = get_stock_price(sym)
+                fetched_price, fetched_pe = get_stock_info(sym)
                 live_price = fetched_price if fetched_price is not None else 0.0
+                pe_ratio = fetched_pe
             else:
                 fetched_nav = get_nav(nav_df, name)
                 live_price = float(fetched_nav) if fetched_nav is not None else 0.0
@@ -110,6 +120,7 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
             "Name": name,
             "Asset Type": "Stock" if is_equity else "Mutual Fund",
             "Listing": "Listed" if p.get("Listed", True) else "Unlisted",
+            "PE Ratio": pe_ratio,
             "Qty": qty,
             "Invested Amount": invested_amt,
             "% of Allocation": pct_allocation * 100,
@@ -119,7 +130,7 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
         })
         
     if not display_data:
-        return pd.DataFrame(columns=["Sector", "Symbol", "Name", "Asset Type", "Listing",
+        return pd.DataFrame(columns=["Sector", "Symbol", "Name", "Asset Type", "Listing", "PE Ratio",
                                      "Qty", "Invested Amount",
                                      "% of Allocation", "Avg Buy", "Live Price", "Current Value"])
     df = pd.DataFrame(display_data)
@@ -184,10 +195,19 @@ else:
             gain_loss = total_current_value - total_invested
             gain_loss_pct = (gain_loss / total_invested * 100) if total_invested > 0 else 0
             
-            m1, m2, m3 = st.columns(3)
+            # Calculate Average PE Ratio
+            # Exclude DEBT and ETF/INDEX FUND sectors
+            pe_df = df[
+                (df["PE Ratio"].notnull()) & 
+                (~df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
+            ]
+            avg_pe = pe_df["PE Ratio"].mean() if not pe_df.empty else 0.0
+            
+            m1, m2, m3, m4 = st.columns(4)
             m1.metric("💰 Total Invested", f"₹{total_invested:,.2f}")
             m2.metric("📈 Current Value", f"₹{total_current_value:,.2f}")
             m3.metric("📊 Gain / Loss", f"₹{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
+            m4.metric("🎯 Average PE", f"{avg_pe:.2f}")
             
             import plotly.graph_objects as go
             import plotly.express as px
@@ -222,6 +242,15 @@ else:
                 st.plotly_chart(fig_pie, use_container_width=True)
                 st.divider()
             
+            # Download button for the current portfolio table
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label=f"📥 Download {port_name} Portfolio as CSV",
+                data=csv,
+                file_name=f"{port_name.replace(' ', '_')}_portfolio.csv",
+                mime="text/csv",
+            )
+
             event = st.dataframe(
                 df,
                 use_container_width=True,
@@ -232,6 +261,7 @@ else:
                 column_config={
                     "Symbol": None,
                     "Asset Type": None,
+                    "PE Ratio": st.column_config.NumberColumn("PE \nRatio", format="%.2f"),
                     "Qty": st.column_config.NumberColumn("Current \nQty", format="%.4f"),
                     "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount", format="₹ %.2f"),
                     "% of Allocation": st.column_config.NumberColumn("% of \nAllocation", format="%.2f%%"),
