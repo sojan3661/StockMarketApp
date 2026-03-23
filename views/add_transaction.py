@@ -23,6 +23,7 @@ with st.spinner("Loading available assets & portfolios..."):
     db_stocks = db.fetch_stocks()
     db_investment_plan = db.fetch_investment_plan()
     open_transactions = db.fetch_open_transactions()
+    db_allocations = db.fetch_allocations()
     
 # Create a list of available portfolios
 if not db_investment_plan:
@@ -205,9 +206,26 @@ with container:
             key=f"port_{st.session_state['tx_form_key']}"
         )
         
+        if selected_portfolio and db_allocations:
+            allocated_sectors = {
+                a.get("Sector") for a in db_allocations 
+                if a.get("Portfolio") == selected_portfolio and float(a.get("Allocation") or 0) > 0
+            }
+            symbols_in_portfolio = {
+                tx.get("Symbol") for tx in open_transactions 
+                if tx.get("Portfolio") == selected_portfolio
+            }
+            filtered_symbols = sorted([
+                p.get("Symbol", "") for p in db_stocks 
+                if p.get("Symbol", "") and (p.get("Sector") in allocated_sectors or p.get("Symbol") in symbols_in_portfolio)
+            ])
+            options_to_show = filtered_symbols
+        else:
+            options_to_show = available_symbols
+
         selected_symbol = st.selectbox(
             "Asset Symbol", 
-            options=available_symbols,
+            options=options_to_show,
             help="Select an asset you've already added via Stock Management.",
             key=f"sym_{st.session_state['tx_form_key']}"
         )
