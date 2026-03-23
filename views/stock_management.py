@@ -16,24 +16,27 @@ except ImportError:
     nse_eq = None
 
 # Cache the mutual fund data from AMFI
-@st.cache_data(ttl=3600)  # cache the dataframe for 1 hour
-def load_nav_data():
-    try:
-        nav_df = pd.read_csv(
-            "https://www.amfiindia.com/spages/NAVAll.txt",
+@st.cache_data(ttl=18000)  # cache the dataframe for 5 hours
+def _fetch_nav_data_cached():
+    import urllib.request
+    import ssl
+    req = urllib.request.Request(
+        "https://www.amfiindia.com/spages/NAVAll.txt",
+        headers={'User-Agent': 'Mozilla/5.0'}
+    )
+    context = ssl._create_unverified_context()
+    with urllib.request.urlopen(req, context=context) as response:
+        return pd.read_csv(
+            response,
             sep=";",
             header=None,
-            names=[
-                "scheme_code",
-                "isin1",
-                "isin2",
-                "scheme_name",
-                "nav",
-                "date"
-            ],
+            names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
             on_bad_lines="skip"
         )
-        return nav_df
+
+def load_nav_data():
+    try:
+        return _fetch_nav_data_cached()
     except Exception as e:
         st.error(f"Error fetching Mutual Fund Data: {e}")
         return pd.DataFrame()
@@ -114,8 +117,38 @@ def generate_asset_template(sectors) -> bytes:
     wb.save(buffer)
     return buffer.getvalue()
 
+@st.dialog("Search Stock Info")
+def search_stock_dialog():
+    search_sym = st.text_input("Enter Stock Symbol (e.g. RELIANCE, TCS):")
+    if search_sym:
+        with st.spinner("Fetching data from NSE..."):
+            try:
+                if nse_eq:
+                    quote = nse_eq(search_sym.upper())
+                    
+                    if quote and 'priceInfo' in quote:
+                        price = quote['priceInfo'].get('lastPrice', 'N/A')
+                        company = quote.get('info', {}).get('companyName', search_sym.upper())
+                        
+                        pe = "N/A"
+                        if 'metadata' in quote:
+                            md = quote['metadata']
+                            pe = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe', 'N/A')
+                            
+                        st.success(f"**{company}** ({search_sym.upper()})")
+                        
+                        m1, m2 = st.columns(2)
+                        m1.metric("Live Price", f"₹ {price}")
+                        m2.metric("PE Ratio", f"{pe}")
+                    else:
+                        st.error(f"Could not fetch details for {search_sym.upper()}. Invalid symbol.")
+                else:
+                    st.error("nsepython library is not loaded.")
+            except Exception as e:
+                st.error(f"Error fetching data. Check symbol spelling.")
+
 st.subheader("Bulk Import Assets")
-col_dl, col_ul = st.columns([1, 1])
+col_dl, col_ul, col_search = st.columns([1, 1, 1])
 
 with col_dl:
     import base64
@@ -129,6 +162,10 @@ with col_ul:
         type=["xlsx"],
         label_visibility="collapsed"
     )
+
+with col_search:
+    if st.button("🔍 Search Stock", use_container_width=True):
+        search_stock_dialog()
 
 if uploaded_asset_file is not None:
     with st.expander("📋 Preview & Import Uploaded Assets", expanded=True):
