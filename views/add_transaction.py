@@ -23,6 +23,7 @@ with st.spinner("Loading available assets & portfolios..."):
     db_stocks = db.fetch_stocks()
     db_investment_plan = db.fetch_investment_plan()
     open_transactions = db.fetch_open_transactions()
+    db_allocations = db.fetch_allocations()
     
 # Create a list of available portfolios
 if not db_investment_plan:
@@ -194,6 +195,22 @@ if "tx_form_key" not in st.session_state:
     
 container = st.container()
 
+@st.dialog("Mutual Fund Calculator")
+def mf_calc_dialog(q_key, p_key, tx_type):
+    st.write(f"Enter the **Quantity** and the **Total {tx_type} Amount**:")
+    
+    current_q = float(st.session_state.get(q_key, 1.0))
+    current_p = float(st.session_state.get(p_key, 100.0))
+    current_total = current_q * current_p
+    
+    calc_qty = st.number_input("Quantity", min_value=0.0001, value=current_q, format="%.4f", step=1.0)
+    calc_total = st.number_input(f"Total {tx_type} Amount (₹)", min_value=0.01, value=current_total, step=500.0, format="%.2f")
+    
+    if st.button("OK", type="primary"):
+        st.session_state[q_key] = float(calc_qty)
+        st.session_state[p_key] = float(calc_total / calc_qty) if calc_qty > 0 else 0.0
+        st.rerun()
+
 with container:
     col1, col2 = st.columns(2)
 
@@ -205,9 +222,26 @@ with container:
             key=f"port_{st.session_state['tx_form_key']}"
         )
         
+        if selected_portfolio and db_allocations:
+            allocated_sectors = {
+                a.get("Sector") for a in db_allocations 
+                if a.get("Portfolio") == selected_portfolio and float(a.get("Allocation") or 0) > 0
+            }
+            symbols_in_portfolio = {
+                tx.get("Symbol") for tx in open_transactions 
+                if tx.get("Portfolio") == selected_portfolio
+            }
+            filtered_symbols = sorted([
+                p.get("Symbol", "") for p in db_stocks 
+                if p.get("Symbol", "") and (p.get("Sector") in allocated_sectors or p.get("Symbol") in symbols_in_portfolio)
+            ])
+            options_to_show = filtered_symbols
+        else:
+            options_to_show = available_symbols
+
         selected_symbol = st.selectbox(
             "Asset Symbol", 
-            options=available_symbols,
+            options=options_to_show,
             help="Select an asset you've already added via Stock Management.",
             key=f"sym_{st.session_state['tx_form_key']}"
         )
@@ -233,8 +267,17 @@ with container:
 
     with col1:
         qty_key = f"qty_{st.session_state['tx_form_key']}"
+        price_key = f"price_{st.session_state['tx_form_key']}"
+        
         if qty_key not in st.session_state:
             st.session_state[qty_key] = 1.0
+        if price_key not in st.session_state:
+            st.session_state[price_key] = 100.0
+            
+        is_mf = any(p.get("Symbol") == selected_symbol and not p.get("Equity", True) for p in db_stocks)
+        if is_mf:
+            if st.button("🧮 Calculate from Total Amount"):
+                mf_calc_dialog(qty_key, price_key, transaction_type)
             
         if sell_all and current_qty > 0:
             st.session_state[qty_key] = float(current_qty)
@@ -259,7 +302,6 @@ with container:
         price = st.number_input(
             "Price per unit (₹)",
             min_value=0.01,
-            value=100.0,
             step=1.0,
             format="%.2f",
             help="The price at which the asset was bought or sold.",
