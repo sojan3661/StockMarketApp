@@ -13,23 +13,27 @@ try:
 except ImportError:
     nse_eq = None
 
+@st.cache_data(ttl=18000)
+def _fetch_nav_data_cached():
+    import urllib.request
+    import ssl
+    req = urllib.request.Request(
+        "https://www.amfiindia.com/spages/NAVAll.txt",
+        headers={'User-Agent': 'Mozilla/5.0'}
+    )
+    context = ssl._create_unverified_context()
+    with urllib.request.urlopen(req, context=context) as response:
+        return pd.read_csv(
+            response,
+            sep=";",
+            header=None,
+            names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
+            on_bad_lines="skip"
+        )
+
 def load_nav_data():
     try:
-        import urllib.request
-        import ssl
-        req = urllib.request.Request(
-            "https://www.amfiindia.com/spages/NAVAll.txt",
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        context = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=context) as response:
-            return pd.read_csv(
-                response,
-                sep=";",
-                header=None,
-                names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
-                on_bad_lines="skip"
-            )
+        return _fetch_nav_data_cached()
     except Exception:
         return pd.DataFrame()
 
@@ -126,7 +130,7 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
                 live_price = fetched_price if fetched_price is not None else 0.0
                 pe_ratio = fetched_pe
             else:
-                fetched_nav = get_nav(nav_df, name)
+                fetched_nav = get_nav(nav_df, sym)
                 live_price = float(fetched_nav) if fetched_nav is not None else 0.0
         else:
             live_price = float(p.get("LTP") or 0.0)

@@ -24,23 +24,27 @@ if not db.is_configured():
 # -----------------------------
 # Load Mutual Fund NAV (cached)
 # -----------------------------
+@st.cache_data(ttl=18000)
+def _fetch_nav_data_cached():
+    import urllib.request
+    import ssl
+    req = urllib.request.Request(
+        "https://www.amfiindia.com/spages/NAVAll.txt",
+        headers={'User-Agent': 'Mozilla/5.0'}
+    )
+    context = ssl._create_unverified_context()
+    with urllib.request.urlopen(req, context=context) as response:
+        return pd.read_csv(
+            response,
+            sep=";",
+            header=None,
+            names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
+            on_bad_lines="skip"
+        )
+
 def load_nav_data():
     try:
-        import urllib.request
-        import ssl
-        req = urllib.request.Request(
-            "https://www.amfiindia.com/spages/NAVAll.txt",
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        context = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=context) as response:
-            return pd.read_csv(
-                response,
-                sep=";",
-                header=None,
-                names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
-                on_bad_lines="skip"
-            )
+        return _fetch_nav_data_cached()
     except Exception:
         return pd.DataFrame()
 
@@ -236,7 +240,7 @@ for i, port_name in enumerate(portfolio_names):
                             else:
                                 price = float(p.get("LTP") or 0.0)
                         else:
-                            price = get_nav(nav_df, name)
+                            price = get_nav(nav_df, sym)
                             
                         # Asset target expected = Total * Sector % * Asset %
                         expected = total_expected * (target_alloc/100) * (alloc/100)
