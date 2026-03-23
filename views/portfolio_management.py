@@ -24,23 +24,25 @@ if not db.is_configured():
 # -----------------------------
 # Load Mutual Fund NAV (cached)
 # -----------------------------
-@st.cache_data(ttl=3600)
 def load_nav_data():
-    nav_df = pd.read_csv(
-        "https://www.amfiindia.com/spages/NAVAll.txt",
-        sep=";",
-        header=None,
-        names=[
-            "scheme_code",
-            "isin1",
-            "isin2",
-            "scheme_name",
-            "nav",
-            "date"
-        ],
-        on_bad_lines="skip"
-    )
-    return nav_df
+    try:
+        import urllib.request
+        import ssl
+        req = urllib.request.Request(
+            "https://www.amfiindia.com/spages/NAVAll.txt",
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        context = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, context=context) as response:
+            return pd.read_csv(
+                response,
+                sep=";",
+                header=None,
+                names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
+                on_bad_lines="skip"
+            )
+    except Exception:
+        return pd.DataFrame()
 
 
 # -----------------------------
@@ -59,10 +61,23 @@ def get_stock_price(symbol):
 # Get MF NAV
 # -----------------------------
 def get_nav(nav_df, fund_name):
+    if nav_df.empty or not fund_name:
+        return 0.0
+        
     res = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav"]]
     if not res.empty:
         return float(res.iloc[0]["nav"])
-    return 0
+        
+    res = nav_df.loc[nav_df["scheme_name"].str.lower() == fund_name.lower(), ["nav"]]
+    if not res.empty:
+        return float(res.iloc[0]["nav"])
+        
+    short_name = fund_name[:15].lower()
+    res = nav_df.loc[nav_df["scheme_name"].str.lower().str.contains(short_name, na=False, regex=False), ["nav"]]
+    if not res.empty:
+        return float(res.iloc[0]["nav"])
+        
+    return 0.0
 
 
 # -----------------------------
