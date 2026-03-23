@@ -444,6 +444,26 @@ class SupabaseClient:
     # TRANSACTIONS API METHODS
     # ==========================================
 
+    def fetch_all_transactions(self, portfolio=None):
+        """Fetches all transactions (both open and closed)."""
+        headers = self._get_headers()
+        if not headers:
+            return []
+            
+        endpoint = f"{self.url}/rest/v1/Transactions?select=*"
+        if portfolio:
+            from urllib.parse import quote
+            safe_port = quote(str(portfolio).strip(), safe="")
+            endpoint += f"&Portfolio=eq.{safe_port}"
+            
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error fetching all transactions: {e}")
+            return []
+
     def fetch_open_transactions(self, portfolio=None):
         """Fetches all open transactions where SellAvg is null."""
         headers = self._get_headers()
