@@ -285,6 +285,9 @@ with st.form("add_asset_form", clear_on_submit=False):
         else:
             stock_ltp = None
 
+    with col2:
+        sector_choice = st.selectbox("Sector", options=existing_sectors if existing_sectors else ["NA"])
+
     # Submission
     submitted = st.form_submit_button("Preview & Add Asset", type="primary")
 
