@@ -167,6 +167,30 @@ class SupabaseClient:
             st.error(f"Error fetching allocations: {e}")
             return []
 
+    def delete_allocations_by_sector(self, sector_name):
+        """Deletes all SectorAllocation entries matching the given sector name."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+
+        from urllib.parse import quote
+        safe_sector = quote(str(sector_name).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/SectorAllocation?Sector=eq.{safe_sector}"
+
+        try:
+            response = requests.delete(endpoint, headers=headers)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked deletion from SectorAllocation.")
+            else:
+                st.error(f"Error deleting sector allocations: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error deleting sector allocations: {e}")
+            return False
+
     def upsert_allocations(self, allocations_list, portfolio):
         """
         Since the SectorAllocation table doesn't have a unique constraint on Sector,
