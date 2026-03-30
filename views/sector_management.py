@@ -20,6 +20,8 @@ if not db.is_configured():
 # This ensures multiple users/tabs stay in sync with the database
 with st.spinner("Loading sectors..."):
     sectors_data = db.fetch_sectors()
+    stocks_data = db.fetch_stocks()
+    allocations_data = db.fetch_allocations()
 
 # Given there's only one column 'Sector', we extract those directly
 existing_names = [s.get('Sector', '').lower() for s in sectors_data]
@@ -142,32 +144,105 @@ def rename_sector_dialog(old_name):
             else:
                 st.error(msg)
 
+
+@st.dialog("Delete Sector")
+def delete_sector_dialog(sector_name):
+    """Confirmation dialog for deleting a sector.
+    - Blocks deletion if stocks are still assigned to it.
+    - Warns and asks for confirmation if SectorAllocation entries exist.
+    - Deletes allocation entries first, then the sector.
+    """
+    # 1. Check if any stocks are still mapped to this sector
+    linked_stocks = [s for s in stocks_data if s.get("Sector", "") == sector_name]
+    if linked_stocks:
+        stock_names = ", ".join([s.get("Symbol", "?") for s in linked_stocks[:5]])
+        extra = f" and {len(linked_stocks) - 5} more" if len(linked_stocks) > 5 else ""
+        st.error(
+            f"❌ Cannot delete **{sector_name}** — {len(linked_stocks)} stock(s) are still assigned to it: "
+            f"**{stock_names}{extra}**.\n\nPlease reassign or remove those stocks first."
+        )
+        if st.button("Close"):
+            st.rerun()
+        return
+
+    # 2. Check for SectorAllocation entries
+    linked_allocs = [a for a in allocations_data if a.get("Sector", "") == sector_name]
+
+    if linked_allocs:
+        portfolios = sorted(set(a.get("Portfolio", "Unknown") for a in linked_allocs))
+        portfolio_list = ", ".join([f"**{p}**" for p in portfolios])
+        st.warning(
+            f"⚠️ **{sector_name}** has allocation entries in {len(linked_allocs)} portfolio record(s): "
+            f"{portfolio_list}.\n\nDeleting this sector will also remove those allocation entries."
+        )
+        st.markdown("---")
+        st.markdown("Are you sure you want to proceed?")
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            if st.button("✅ Yes, Delete Everything", type="primary", use_container_width=True):
+                with st.spinner("Removing sector allocations..."):
+                    alloc_ok = db.delete_allocations_by_sector(sector_name)
+                if not alloc_ok:
+                    st.error("Failed to delete sector allocation entries. Sector not deleted.")
+                    return
+                with st.spinner(f"Deleting sector '{sector_name}'..."):
+                    sec_ok = db.delete_sector(sector_name)
+                if sec_ok:
+                    st.success(f"✅ Deleted '{sector_name}' and its allocation entries.")
+                    st.rerun()
+                else:
+                    st.error("Allocation entries deleted, but failed to delete the sector record.")
+        with col_no:
+            if st.button("Cancel", use_container_width=True):
+                st.rerun()
+    else:
+        # No allocations — simple confirmation
+        st.warning(f"Are you sure you want to delete **{sector_name}**? This cannot be undone.")
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            if st.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
+                with st.spinner(f"Deleting '{sector_name}'..."):
+                    ok = db.delete_sector(sector_name)
+                if ok:
+                    st.success(f"Deleted '{sector_name}'.")
+                    st.rerun()
+        with col_no:
+            if st.button("Cancel", use_container_width=True):
+                st.rerun()
+
+
 if not sectors_data:
     st.info("No sectors found in the database. Use the form above to add your first sector!")
 else:
     for item in sectors_data:
         sector_name = item.get("Sector", "Unknown Sector")
-        
+
+        # Count stocks and allocations for this sector (for display badge)
+        stock_count = sum(1 for s in stocks_data if s.get("Sector", "") == sector_name)
+        alloc_count = sum(1 for a in allocations_data if a.get("Sector", "") == sector_name)
+
         col_name, col_edit, col_del = st.columns([3, 1, 1])
         with col_name:
+            badges = ""
+            if stock_count:
+                badges += f'<span style="background-color: #3B82F620; color: #60A5FA; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 8px;">{stock_count} stock(s)</span>'
+            if alloc_count:
+                badges += f'<span style="background-color: #F59E0B20; color: #F59E0B; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 6px;">{alloc_count} allocation(s)</span>'
             st.markdown(
                 f"""
                 <div style="background-color: #1A1D24; padding: 15px; border-radius: 8px; border: 1px solid #2D333B; margin-bottom: 10px;">
-                    <div style="font-weight: 600; font-size: 1.1rem; color: #F8FAFC;">{sector_name}</div>
+                    <span style="font-weight: 600; font-size: 1.1rem; color: #F8FAFC;">{sector_name}</span>{badges}
                 </div>
-                """, 
+                """,
                 unsafe_allow_html=True
             )
-            
+
         with col_edit:
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) 
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
             if st.button("✏️ Edit", key=f"edit_{sector_name}", use_container_width=True):
                 rename_sector_dialog(sector_name)
 
         with col_del:
-            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) 
+            st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
             if st.button("🗑️ Delete", key=f"del_{sector_name}", type="primary", use_container_width=True):
-                success = db.delete_sector(sector_name)
-                if success:
-                    st.success(f"Deleted '{sector_name}'.")
-                    st.rerun()
+                delete_sector_dialog(sector_name)
