@@ -10,6 +10,29 @@ from Config.supabase_client import db
 
 st.title("Sector Management")
 
+# Make sector card buttons look like clickable HTML labels
+st.markdown("""
+<style>
+div[data-testid="column"]:first-child [data-testid="stBaseButton-secondary"] {
+    background-color: #1A1D24 !important;
+    border: 1px solid #2D333B !important;
+    border-radius: 8px !important;
+    padding: 14px 16px !important;
+    text-align: left !important;
+    color: #F8FAFC !important;
+    font-weight: 600 !important;
+    font-size: 1rem !important;
+    cursor: pointer !important;
+    transition: border-color 0.18s, background-color 0.18s !important;
+    margin-bottom: 6px !important;
+}
+div[data-testid="column"]:first-child [data-testid="stBaseButton-secondary"]:hover {
+    background-color: #22262F !important;
+    border-color: #4B5563 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # Verification check for credentials
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
@@ -211,6 +234,95 @@ def delete_sector_dialog(sector_name):
                 st.rerun()
 
 
+@st.dialog("Sector Details", width="large")
+def sector_details_dialog(sector_name):
+    """Rich popup showing allocations (with progress bars) and stock cards."""
+
+    # Header
+    st.markdown(
+        f"""
+        <div style="background:linear-gradient(135deg,#1E293B,#0F172A);
+                    border:1px solid #334155; border-radius:12px;
+                    padding:16px 20px; margin-bottom:12px;">
+            <span style="font-size:1.4rem; font-weight:700; color:#F8FAFC;">🏷️ {sector_name}</span>
+        </div>
+        """, unsafe_allow_html=True
+    )
+
+    # ── Portfolio Allocations ─────────────────────────────────────────────────
+    linked_allocs = [
+        a for a in allocations_data
+        if a.get("Sector", "") == sector_name and float(a.get("Allocation") or 0) > 0
+    ]
+    st.markdown("##### 📊 Portfolio Allocations")
+    if linked_allocs:
+        for a in linked_allocs:
+            portfolio = a.get("Portfolio", "—")
+            alloc_pct = float(a.get("Allocation") or 0)
+            bar_width = min(alloc_pct, 100)
+            bar_color = "#6366F1" if alloc_pct >= 10 else "#F59E0B"
+            st.markdown(
+                f"""
+                <div style="background:#1A1D24; border:1px solid #2D333B;
+                            border-radius:10px; padding:14px 18px; margin-bottom:10px;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                        <span style="font-weight:600; color:#F8FAFC;">{portfolio}</span>
+                        <span style="font-weight:700; color:{bar_color};">{alloc_pct:.1f}%</span>
+                    </div>
+                    <div style="background:#2D333B; border-radius:6px; height:8px; overflow:hidden;">
+                        <div style="width:{bar_width}%; background:{bar_color}; height:100%; border-radius:6px;"></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True
+            )
+    else:
+        st.info("No allocations set for this sector.")
+
+    st.divider()
+
+    # ── Stocks / MFs ─────────────────────────────────────────────────────────
+    linked_stocks = [s for s in stocks_data if s.get("Sector", "") == sector_name]
+    st.markdown(f"##### 📈 Stocks / Mutual Funds ({len(linked_stocks)})")
+    if linked_stocks:
+        cols = st.columns(2)
+        for i, s in enumerate(linked_stocks):
+            sym        = s.get("Symbol", "—")
+            name       = s.get("Name", "—")
+            is_eq      = s.get("Equity", True)
+            mcap       = s.get("MarketCap", "NA")
+            listed     = s.get("Listed", True)
+            ltp        = s.get("LTP")
+            type_label = "Stock" if is_eq else "Mutual Fund"
+            type_color = "#3B82F6" if is_eq else "#4ADE80"
+            ltp_html   = f'<span style="color:#F59E0B; font-size:0.8rem;"> · ₹{ltp}</span>' if ltp else ""
+            listed_tag = "✅ Listed" if listed else "🔒 Unlisted"
+            with cols[i % 2]:
+                st.markdown(
+                    f"""
+                    <div style="background:#1A1D24; border:1px solid #2D333B;
+                                border-radius:10px; padding:14px 16px; margin-bottom:10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                            <span style="font-weight:700; color:#F8FAFC;">{sym}{ltp_html}</span>
+                            <span style="background:{type_color}20; color:{type_color};
+                                         padding:2px 8px; border-radius:4px;
+                                         font-size:0.7rem; font-weight:600;">{type_label}</span>
+                        </div>
+                        <div style="color:#94A3B8; font-size:0.82rem; margin:4px 0 8px;
+                                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                             title="{name}">{name}</div>
+                        <div style="display:flex; gap:6px;">
+                            <span style="background:#6366F120; color:#818CF8;
+                                         padding:2px 7px; border-radius:4px; font-size:0.72rem;">{mcap}</span>
+                            <span style="background:#4B556330; color:#9CA3AF;
+                                         padding:2px 7px; border-radius:4px; font-size:0.72rem;">{listed_tag}</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True
+                )
+    else:
+        st.info("No stocks or mutual funds assigned to this sector.")
+
+
 if not sectors_data:
     st.info("No sectors found in the database. Use the form above to add your first sector!")
 else:
@@ -219,23 +331,18 @@ else:
 
         # Count stocks and allocations for this sector (for display badge)
         stock_count = sum(1 for s in stocks_data if s.get("Sector", "") == sector_name)
-        alloc_count = sum(1 for a in allocations_data if a.get("Sector", "") == sector_name)
+        alloc_count = sum(1 for a in allocations_data if a.get("Sector", "") == sector_name and float(a.get("Allocation") or 0) > 0)
 
         col_name, col_edit, col_del = st.columns([3, 1, 1])
         with col_name:
-            badges = ""
+            # Single button styled as a card via injected CSS; clicking opens details
+            label_parts = [sector_name]
             if stock_count:
-                badges += f'<span style="background-color: #3B82F620; color: #60A5FA; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 8px;">{stock_count} stock(s)</span>'
+                label_parts.append(f"  🔵 {stock_count} stock(s)")
             if alloc_count:
-                badges += f'<span style="background-color: #F59E0B20; color: #F59E0B; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-left: 6px;">{alloc_count} allocation(s)</span>'
-            st.markdown(
-                f"""
-                <div style="background-color: #1A1D24; padding: 15px; border-radius: 8px; border: 1px solid #2D333B; margin-bottom: 10px;">
-                    <span style="font-weight: 600; font-size: 1.1rem; color: #F8FAFC;">{sector_name}</span>{badges}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+                label_parts.append(f"  🟡 {alloc_count} allocation(s)")
+            if st.button("   ".join(label_parts), key=f"view_{sector_name}", use_container_width=True):
+                sector_details_dialog(sector_name)
 
         with col_edit:
             st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
@@ -244,5 +351,8 @@ else:
 
         with col_del:
             st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-            if st.button("🗑️ Delete", key=f"del_{sector_name}", type="primary", use_container_width=True):
+            has_stocks = stock_count > 0
+            del_tooltip = f"{stock_count} stock(s) assigned — reassign them before deleting." if has_stocks else ""
+            if st.button("🗑️ Delete", key=f"del_{sector_name}", type="primary", use_container_width=True,
+                         disabled=has_stocks, help=del_tooltip):
                 delete_sector_dialog(sector_name)
