@@ -731,6 +731,109 @@ class SupabaseClient:
             st.error(f"Error deleting investment plan: {e}")
             return False
 
+    # ==========================================
+    # FY DETAILS API METHODS
+    # ==========================================
+
+    def fetch_fy_details(self):
+        """Fetches all performance metrics from the FY_Details table."""
+        headers = self._get_headers()
+        if not headers:
+            return []
+            
+        # Request table "FY_Details"
+        endpoint = f"{self.url}/rest/v1/FY_Details?select=*"
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            # Sort by FY ascending
+            data = response.json()
+            return sorted(data, key=lambda x: str(x.get('FY', '')))
+        except Exception as e:
+            st.error(f"Error fetching FY Details: {e}")
+            return []
+
+    def add_fy_detail(self, fy, cash_start=None, stock_start=None, mf_start=None, target=None, cash_end=None, stock_end=None, mf_end=None):
+        """Adds a new record to the FY_Details table."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/FY_Details"
+        data = {
+            "FY": fy,
+            "CashStart": cash_start,
+            "StockStart": stock_start,
+            "MFStart": mf_start,
+            "Target": target,
+            "CashEnd": cash_end,
+            "StockEnd": stock_end,
+            "MFEnd": mf_end
+        }
+        
+        try:
+            response = requests.post(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            st.error(f"Error adding FY Detail: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error adding FY Detail: {e}")
+            return False
+
+    def update_fy_detail(self, fy, cash_start=None, stock_start=None, mf_start=None, target=None, cash_end=None, stock_end=None, mf_end=None):
+        """Updates an existing record in the FY_Details table."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        from urllib.parse import quote
+        safe_fy = quote(str(fy).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/FY_Details?FY=eq.{safe_fy}"
+        
+        data = {
+            "CashStart": cash_start,
+            "StockStart": stock_start,
+            "MFStart": mf_start,
+            "Target": target,
+            "CashEnd": cash_end,
+            "StockEnd": stock_end,
+            "MFEnd": mf_end
+        }
+        
+        try:
+            response = requests.patch(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            st.error(f"Error updating FY Detail: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error updating FY Detail: {e}")
+            return False
+
+    def delete_fy_detail(self, fy):
+        """Deletes a record from the FY_Details table."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        from urllib.parse import quote
+        safe_fy = quote(str(fy).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/FY_Details?FY=eq.{safe_fy}"
+        
+        try:
+            response = requests.delete(endpoint, headers=headers)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            st.error(f"Error deleting FY Detail: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error deleting FY Detail: {e}")
+            return False
+
 
 # Create a singleton instance that can be imported across the app
 db = SupabaseClient()
