@@ -20,10 +20,11 @@ portfolio_rebalancing = st.Page("views/portfolio_management.py", title="Portfoli
 portfolio = st.Page("views/portfolio.py", title="Portfolio", icon="🌍")
 add_transaction = st.Page("views/add_transaction.py", title="Add Transaction", icon="💸")
 pnl_report = st.Page("views/pnl_report.py", title="P&L Report", icon="🧾")
+performance_metric = st.Page("views/performance_metric.py", title="Performance Metric", icon="🎯")
 
 pages = [
     dashboard, build_portfolio, sector_management, sector_allocation, 
-    asset_management, portfolio_rebalancing, portfolio, add_transaction, pnl_report
+    asset_management, portfolio_rebalancing, portfolio, add_transaction, pnl_report, performance_metric
 ]
 
 pg = st.navigation(pages, position="hidden")
