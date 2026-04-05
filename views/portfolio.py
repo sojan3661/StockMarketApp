@@ -208,7 +208,7 @@ else:
                 df = get_portfolio_display_data(port_stocks, port_open_transactions, nav_df, port_alloc_tuple)
             
             # If a portfolio has no open transactions and no asset allocations, it might be empty
-            if df.empty or (df["Qty"].sum() == 0 and df["Target Allocation %"].sum() == 0):
+            if df.empty or (df["Qty"].sum() == 0 and len(port_stock_allocations) == 0):
                 st.info(f"No assets or allocations found for {port_name}.")
                 continue
             
