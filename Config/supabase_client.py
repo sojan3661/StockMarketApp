@@ -293,12 +293,29 @@ class SupabaseClient:
             return False
 
     def delete_stock(self, symbol):
-        """Deletes a stock from the StockManagement table."""
+        """Deletes a stock from the StockManagement table and its associated records."""
         headers = self._get_headers()
         if not headers:
             return False
             
-        endpoint = f"{self.url}/rest/v1/StockManagement?Symbol=eq.{symbol}"
+        from urllib.parse import quote
+        safe_sym = quote(str(symbol).strip(), safe="")
+
+        # 1. Delete associated Transactions to prevent foreign key errors
+        tx_endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{safe_sym}"
+        try:
+            requests.delete(tx_endpoint, headers=headers)
+        except Exception as e:
+            st.warning(f"Note: Could not delete associated transactions for {symbol}: {e}")
+
+        # 2. Delete associated Stock Allocation
+        alloc_endpoint = f"{self.url}/rest/v1/StockAllocation?Symbol=eq.{safe_sym}"
+        try:
+            requests.delete(alloc_endpoint, headers=headers)
+        except Exception as e:
+            st.warning(f"Note: Could not delete associated stock allocations for {symbol}: {e}")
+            
+        endpoint = f"{self.url}/rest/v1/StockManagement?Symbol=eq.{safe_sym}"
         
         try:
             response = requests.delete(endpoint, headers=headers)
