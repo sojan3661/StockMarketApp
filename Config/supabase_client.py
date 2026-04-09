@@ -658,6 +658,80 @@ class SupabaseClient:
             st.error(f"Error processing sell transaction: {e}")
             return False
 
+    def delete_transaction(self, tx_id):
+        """Deletes a transaction entirely."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/Transactions?id=eq.{tx_id}"
+        try:
+            response = requests.delete(endpoint, headers=headers)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked the deletion.")
+            else:
+                st.error(f"Error deleting transaction: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error deleting transaction: {e}")
+            return False
+
+    def revert_sell_transaction(self, tx_id):
+        """Removes the SellDate and SellAvg from a transaction, making it open again."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/Transactions?id=eq.{tx_id}"
+        data = {
+            "SellDate": None,
+            "SellAvg": None
+        }
+        try:
+            response = requests.patch(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked the update.")
+            else:
+                st.error(f"Error reverting sell transaction: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error reverting sell transaction: {e}")
+            return False
+
+    def update_transaction(self, tx_id, qty, buy_avg, buy_date, sell_date=None, sell_avg=None):
+        """Updates an existing transaction."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/Transactions?id=eq.{tx_id}"
+        data = {
+            "Qty": qty,
+            "BuyAvg": buy_avg,
+            "BuyDate": buy_date,
+            "SellDate": sell_date,
+            "SellAvg": sell_avg
+        }
+        try:
+            response = requests.patch(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked the update.")
+            else:
+                st.error(f"Error updating transaction: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error updating transaction: {e}")
+            return False
+
 
     # ==========================================
     # INVESTMENT PLAN API METHODS
