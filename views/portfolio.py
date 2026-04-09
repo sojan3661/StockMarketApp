@@ -166,6 +166,7 @@ with st.spinner("Loading portfolio data and live market prices..."):
     open_transactions = db.fetch_open_transactions()
     nav_df = load_nav_data()
     db_stock_allocations = db.fetch_stock_allocations()
+    db_sector_allocations = db.fetch_allocations()
     db_investment_plan = db.fetch_investment_plan()
     
 # Support list of plans vs single plan
@@ -190,6 +191,16 @@ else:
                 for a in db_stock_allocations
                 if a.get("Portfolio") == port_name and a.get("Symbol") and (a.get("Allocation") or 0) > 0
             }
+            
+            # Filter sector targets for this specific portfolio
+            port_sector_allocations = {
+                a["Sector"]: a["Allocation"]
+                for a in db_sector_allocations
+                if a.get("Portfolio") == port_name and a.get("Sector") and (a.get("Allocation") or 0) > 0
+            }
+            
+            # Get mapping of symbol to sector
+            symbol_to_sector = {s.get("Symbol"): s.get("Sector") for s in db_stocks if s.get("Symbol")}
             
             # Only show assets mapped to this portfolio in StockAllocation
             mapped_symbols = set(port_stock_allocations.keys())
@@ -237,33 +248,68 @@ else:
             
             st.divider()
             
-            # Pie Chart: Stock vs Allocation (Invested Amount)
-            if not df.empty and df["Invested Amount"].sum() > 0:
-                st.subheader("Asset Allocation")
+            # Pie Chart: Stock vs Allocation (Invested Amount) & Projected Target Allocation
+            pie_col1, pie_col2 = st.columns(2)
+            
+            with pie_col1:
+                if not df.empty and df["Invested Amount"].sum() > 0:
+                    st.subheader("Current Asset Allocation")
+                    
+                    # Filter out zero-investment rows for a cleaner pie chart
+                    pie_df = df[df["Invested Amount"] > 0]
+                    
+                    fig_pie = go.Figure(go.Pie(
+                        labels=pie_df["Name"].tolist(),
+                        values=pie_df["Invested Amount"].tolist(),
+                        hole=0.4,
+                        marker_colors=px.colors.qualitative.Pastel,
+                        textinfo="label+percent",
+                        textposition="inside",
+                    ))
+                    
+                    fig_pie.update_layout(
+                        showlegend=False,
+                        margin=dict(t=20, b=20, l=0, r=0),
+                        height=400,
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color="#E2E8F0")
+                    )
+                    
+                    st.plotly_chart(fig_pie, use_container_width=True)
+            
+            with pie_col2:
+                # Calculate Projected Allocation %
+                proj_data = []
+                for sym, alloc in port_stock_allocations.items():
+                    sector = symbol_to_sector.get(sym)
+                    sec_alloc = port_sector_allocations.get(sector, 0)
+                    proj_pct = (alloc * sec_alloc) / 100
+                    if proj_pct > 0:
+                        name = next((s.get("Name") for s in db_stocks if s.get("Symbol") == sym), sym)
+                        proj_data.append({"Name": name, "Projected %": proj_pct})
                 
-                # Filter out zero-investment rows for a cleaner pie chart
-                pie_df = df[df["Invested Amount"] > 0]
-                
-                fig_pie = go.Figure(go.Pie(
-                    labels=pie_df["Name"].tolist(),
-                    values=pie_df["Invested Amount"].tolist(),
-                    hole=0.4,
-                    marker_colors=px.colors.qualitative.Pastel,
-                    textinfo="label+percent",
-                    textposition="inside",
-                ))
-                
-                fig_pie.update_layout(
-                    showlegend=False,
-                    margin=dict(t=20, b=20, l=0, r=0),
-                    height=600,
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font=dict(color="#E2E8F0")
-                )
-                
-                st.plotly_chart(fig_pie, use_container_width=True)
-                st.divider()
+                if proj_data:
+                    st.subheader("Projected Target Allocation")
+                    proj_df = pd.DataFrame(proj_data)
+                    fig_proj = go.Figure(go.Pie(
+                        labels=proj_df["Name"].tolist(),
+                        values=proj_df["Projected %"].tolist(),
+                        marker_colors=px.colors.qualitative.Pastel,
+                        textinfo="label+percent",
+                        textposition="inside",
+                    ))
+                    fig_proj.update_layout(
+                        showlegend=False,
+                        margin=dict(t=20, b=20, l=0, r=0),
+                        height=400,
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color="#E2E8F0")
+                    )
+                    st.plotly_chart(fig_proj, use_container_width=True)
+                    
+            st.divider()
             
             # Download button for the current portfolio table
             csv = df.to_csv(index=False).encode('utf-8')

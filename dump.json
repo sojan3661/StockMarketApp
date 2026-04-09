@@ -1,0 +1,931 @@
+{
+  "Plans": [
+    {
+      "Current Invested Amount": 50000,
+      "Monthly SIP": 10000,
+      "Number of Months": 45,
+      "Portfolio": "Emergency Fund",
+      "Description": "Emergency fund"
+    },
+    {
+      "Current Invested Amount": 0,
+      "Monthly SIP": 1000,
+      "Number of Months": 15,
+      "Portfolio": "Debt Repayment",
+      "Description": "Fund for repaying debt"
+    },
+    {
+      "Current Invested Amount": 5000,
+      "Monthly SIP": 5000,
+      "Number of Months": 19,
+      "Portfolio": "Opportunity Fund",
+      "Description": "Targeting a 1L fund for opportunities"
+    },
+    {
+      "Current Invested Amount": 0,
+      "Monthly SIP": 1500000,
+      "Number of Months": 1,
+      "Portfolio": "Home",
+      "Description": null
+    },
+    {
+      "Current Invested Amount": 200000,
+      "Monthly SIP": 10000,
+      "Number of Months": 10,
+      "Portfolio": "Core Portfolio",
+      "Description": "Long term investment portfolio"
+    }
+  ],
+  "Sector Allocations": [
+    {
+      "id": 89,
+      "Sector": "AUTO ANCILLARY",
+      "Allocation": 3.5,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 90,
+      "Sector": "FINANCE",
+      "Allocation": 15,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 91,
+      "Sector": "CHEMICALS",
+      "Allocation": 3.5,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 92,
+      "Sector": "COMMUNICATION SERVICES",
+      "Allocation": 3.5,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 93,
+      "Sector": "DEBT",
+      "Allocation": 0,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 94,
+      "Sector": "EMS",
+      "Allocation": 3,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 95,
+      "Sector": "EXCHANGE & STOCKBROKING",
+      "Allocation": 15,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 97,
+      "Sector": "INFRASTRUCTURE",
+      "Allocation": 8,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 99,
+      "Sector": "MONOPOLY",
+      "Allocation": 3,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 100,
+      "Sector": "RETAIL",
+      "Allocation": 12,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 101,
+      "Sector": "BATTERIES",
+      "Allocation": 3,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 102,
+      "Sector": "INSURANCE",
+      "Allocation": 4,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 103,
+      "Sector": "HEALTHCARE & PHARMA",
+      "Allocation": 8,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 104,
+      "Sector": "RECYCLING",
+      "Allocation": 3.5,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 105,
+      "Sector": "ETF/ INDEX FUND",
+      "Allocation": 0,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 88,
+      "Sector": "AUTOMOBILE",
+      "Allocation": 4,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 96,
+      "Sector": "AMC",
+      "Allocation": 6,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 98,
+      "Sector": "GOLD & SILVER",
+      "Allocation": 5,
+      "Portfolio": "Core Portfolio"
+    },
+    {
+      "id": 213,
+      "Sector": "AUTO ANCILLARY",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 214,
+      "Sector": "FINANCE",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 215,
+      "Sector": "CHEMICALS",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 216,
+      "Sector": "COMMUNICATION SERVICES",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 217,
+      "Sector": "DEBT",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 218,
+      "Sector": "EMS",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 219,
+      "Sector": "EXCHANGE & STOCKBROKING",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 220,
+      "Sector": "INFRASTRUCTURE",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 221,
+      "Sector": "MONOPOLY",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 222,
+      "Sector": "RETAIL",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 223,
+      "Sector": "BATTERIES",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 224,
+      "Sector": "INSURANCE",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 225,
+      "Sector": "HEALTHCARE & PHARMA",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 226,
+      "Sector": "RECYCLING",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 227,
+      "Sector": "ETF/ INDEX FUND",
+      "Allocation": 60,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 228,
+      "Sector": "AUTOMOBILE",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 229,
+      "Sector": "AMC",
+      "Allocation": 0,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 230,
+      "Sector": "GOLD & SILVER",
+      "Allocation": 15,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 231,
+      "Sector": "HYBRID",
+      "Allocation": 25,
+      "Portfolio": "Home"
+    },
+    {
+      "id": 67,
+      "Sector": "DEBT",
+      "Allocation": 100,
+      "Portfolio": "Emergency Fund"
+    },
+    {
+      "id": 69,
+      "Sector": "DEBT",
+      "Allocation": 100,
+      "Portfolio": "Opportunity Fund"
+    },
+    {
+      "id": 232,
+      "Sector": "AUTO ANCILLARY",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 233,
+      "Sector": "FINANCE",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 234,
+      "Sector": "CHEMICALS",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 235,
+      "Sector": "COMMUNICATION SERVICES",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 236,
+      "Sector": "DEBT",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 237,
+      "Sector": "EMS",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 238,
+      "Sector": "EXCHANGE & STOCKBROKING",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 239,
+      "Sector": "INFRASTRUCTURE",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 240,
+      "Sector": "MONOPOLY",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 241,
+      "Sector": "RETAIL",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 242,
+      "Sector": "BATTERIES",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 243,
+      "Sector": "INSURANCE",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 244,
+      "Sector": "HEALTHCARE & PHARMA",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 245,
+      "Sector": "RECYCLING",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 246,
+      "Sector": "ETF/ INDEX FUND",
+      "Allocation": 83,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 247,
+      "Sector": "AUTOMOBILE",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 248,
+      "Sector": "AMC",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 249,
+      "Sector": "GOLD & SILVER",
+      "Allocation": 17,
+      "Portfolio": "Debt Repayment"
+    },
+    {
+      "id": 250,
+      "Sector": "HYBRID",
+      "Allocation": 0,
+      "Portfolio": "Debt Repayment"
+    }
+  ],
+  "Stock Allocations": [
+    {
+      "Symbol": "M&M",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 101
+    },
+    {
+      "Symbol": "PRICOLLTD",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 102
+    },
+    {
+      "Symbol": "ICICIBANK",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 103
+    },
+    {
+      "Symbol": "JIOFIN",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 104
+    },
+    {
+      "Symbol": "HDFCBANK",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 105
+    },
+    {
+      "Symbol": "IDFCFIRSTB",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 106
+    },
+    {
+      "Symbol": "CLEAN",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 107
+    },
+    {
+      "Symbol": "AFFLE",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 108
+    },
+    {
+      "Symbol": "LIQUIDBEES",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 109
+    },
+    {
+      "Symbol": "ZERODHA OVERNIGHT FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 111
+    },
+    {
+      "Symbol": "JIOBLACKROCK OVERNIGHT FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 40,
+      "id": 112
+    },
+    {
+      "Symbol": "AVALON",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 113
+    },
+    {
+      "Symbol": "CAMS",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 116
+    },
+    {
+      "Symbol": "CDSL",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 117
+    },
+    {
+      "Symbol": "NAM-INDIA",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 118
+    },
+    {
+      "Symbol": "HDFCAMC",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 119
+    },
+    {
+      "Symbol": "TATASTEEL",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 120
+    },
+    {
+      "Symbol": "TATAPOWER",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 121
+    },
+    {
+      "Symbol": "LT",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 122
+    },
+    {
+      "Symbol": "GOLDBEES",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 123
+    },
+    {
+      "Symbol": "PVRINOX",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 124
+    },
+    {
+      "Symbol": "HINDUNILVR",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 125
+    },
+    {
+      "Symbol": "TATACONSUM",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 126
+    },
+    {
+      "Symbol": "RELIANCE",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 127
+    },
+    {
+      "Symbol": "EXIDEIND",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 128
+    },
+    {
+      "Symbol": "HDFCLIFE",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 129
+    },
+    {
+      "Symbol": "TATA INDIA PHARMA & HEALTHCARE FUND-DIRECT PLAN-GROWTH",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 130
+    },
+    {
+      "Symbol": "WABAG",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 132
+    },
+    {
+      "Symbol": "LIQUIDBEES",
+      "Portfolio": "Opportunity Fund",
+      "Allocation": 70,
+      "id": 139
+    },
+    {
+      "Symbol": "ZERODHA OVERNIGHT FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Opportunity Fund",
+      "Allocation": 30,
+      "id": 141
+    },
+    {
+      "Symbol": "JIOBLACKROCK OVERNIGHT FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Opportunity Fund",
+      "Allocation": 0,
+      "id": 142
+    },
+    {
+      "Symbol": "NSE",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 115
+    },
+    {
+      "Symbol": "ICICI Prudential Gilt Fund - Direct Plan - Growth",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 60,
+      "id": 110
+    },
+    {
+      "Symbol": "ORBIS",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 114
+    },
+    {
+      "Symbol": "ICICI Prudential Gilt Fund - Direct Plan - Growth",
+      "Portfolio": "Opportunity Fund",
+      "Allocation": 0,
+      "id": 140
+    },
+    {
+      "Symbol": "M&M",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 143
+    },
+    {
+      "Symbol": "PRICOLLTD",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 144
+    },
+    {
+      "Symbol": "ICICIBANK",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 20,
+      "id": 145
+    },
+    {
+      "Symbol": "JIOFIN",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 40,
+      "id": 146
+    },
+    {
+      "Symbol": "HDFCBANK",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 20,
+      "id": 147
+    },
+    {
+      "Symbol": "IDFCFIRSTB",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 20,
+      "id": 148
+    },
+    {
+      "Symbol": "CLEAN",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 149
+    },
+    {
+      "Symbol": "AFFLE",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 150
+    },
+    {
+      "Symbol": "AVALON",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 151
+    },
+    {
+      "Symbol": "NSE",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 33,
+      "id": 152
+    },
+    {
+      "Symbol": "ORBIS",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 1,
+      "id": 153
+    },
+    {
+      "Symbol": "CAMS",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 34,
+      "id": 154
+    },
+    {
+      "Symbol": "CDSL",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 33,
+      "id": 155
+    },
+    {
+      "Symbol": "NAM-INDIA",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 50,
+      "id": 156
+    },
+    {
+      "Symbol": "HDFCAMC",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 50,
+      "id": 157
+    },
+    {
+      "Symbol": "TATASTEEL",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 30,
+      "id": 158
+    },
+    {
+      "Symbol": "TATAPOWER",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 20,
+      "id": 159
+    },
+    {
+      "Symbol": "LT",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 50,
+      "id": 160
+    },
+    {
+      "Symbol": "GOLDBEES",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 161
+    },
+    {
+      "Symbol": "PVRINOX",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 162
+    },
+    {
+      "Symbol": "HINDUNILVR",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 35,
+      "id": 163
+    },
+    {
+      "Symbol": "TATACONSUM",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 25,
+      "id": 164
+    },
+    {
+      "Symbol": "LIQUIDBEES",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 0,
+      "id": 77
+    },
+    {
+      "Symbol": "ZERODHA OVERNIGHT FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 0,
+      "id": 79
+    },
+    {
+      "Symbol": "JIOBLACKROCK OVERNIGHT FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 0,
+      "id": 80
+    },
+    {
+      "Symbol": "RELIANCE",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 40,
+      "id": 165
+    },
+    {
+      "Symbol": "ICICI Prudential Gilt Fund - Direct Plan - Growth",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 0,
+      "id": 78
+    },
+    {
+      "Symbol": "DSP Nifty Healthcare Index Fund - Direct- Growth",
+      "Portfolio": "Emergency Fund",
+      "Allocation": 0,
+      "id": 131
+    },
+    {
+      "Symbol": "EXIDEIND",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 166
+    },
+    {
+      "Symbol": "HDFCLIFE",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 167
+    },
+    {
+      "Symbol": "TATA INDIA PHARMA & HEALTHCARE FUND-DIRECT PLAN-GROWTH",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 50,
+      "id": 168
+    },
+    {
+      "Symbol": "WABAG",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 100,
+      "id": 170
+    },
+    {
+      "Symbol": "DSP Nifty Healthcare Index Fund - Direct- Growth",
+      "Portfolio": "Core Portfolio",
+      "Allocation": 50,
+      "id": 169
+    },
+    {
+      "Symbol": "MIRAE ASSET NIFTY SMALLCAP 250 MOMENTUM QUALITY 100 ETF FUND OF FUND - DIRECT PLAN - GROWTH",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 255
+    },
+    {
+      "Symbol": "KOTAK NIFTY MIDCAP 150 MOMENTUM 50 INDEX FUND-DIRECT PLAN-GROWTH",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 256
+    },
+    {
+      "Symbol": "KOTAK NIFTY ALPHA 50 INDEX FUND - DIRECT PLAN - GROWTH",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 257
+    },
+    {
+      "Symbol": "NIPPON INDIA NIFTY 50 VALUE 20 INDEX FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 258
+    },
+    {
+      "Symbol": "KOTAK NIFTY500 MOMENTUM 50 INDEX FUND - DIRECT PLAN - GROWTH",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 259
+    },
+    {
+      "Symbol": "JIOBLACKROCK NIFTY 50 INDEX FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Home",
+      "Allocation": 30,
+      "id": 260
+    },
+    {
+      "Symbol": "AXIS NIFTY BANK INDEX FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Home",
+      "Allocation": 30,
+      "id": 261
+    },
+    {
+      "Symbol": "TATA NIFTY MIDCAP 150 MOMENTUM 50 INDEX FUND - GROWTH - DIRECT PLAN",
+      "Portfolio": "Home",
+      "Allocation": 25,
+      "id": 262
+    },
+    {
+      "Symbol": "EDELWEISS NIFTY500 MULTICAP MOMENTUM QUALITY 50 INDEX FUND - DIRECT - GROWTH",
+      "Portfolio": "Home",
+      "Allocation": 15,
+      "id": 263
+    },
+    {
+      "Symbol": "NIPPON INDIA NIFTY BANK INDEX FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 264
+    },
+    {
+      "Symbol": "EDELWEISS GOLD AND SILVER ETF FOF - DIRECT PLAN - GROWTH",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 265
+    },
+    {
+      "Symbol": "MOTILAL OSWAL GOLD AND SILVER PASSIVE FUND OF FUNDS(REGULAR PLAN)",
+      "Portfolio": "Home",
+      "Allocation": 100,
+      "id": 266
+    },
+    {
+      "Symbol": "GOLDBEES",
+      "Portfolio": "Home",
+      "Allocation": 0,
+      "id": 267
+    },
+    {
+      "Symbol": "TATA ARBITRAGE FUND-DIRECT PLAN-GROWTH",
+      "Portfolio": "Home",
+      "Allocation": 10,
+      "id": 268
+    },
+    {
+      "Symbol": "MIRAE ASSET NIFTY SMALLCAP 250 MOMENTUM QUALITY 100 ETF FUND OF FUND - DIRECT PLAN - GROWTH",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 15.7,
+      "id": 211
+    },
+    {
+      "Symbol": "KOTAK NIFTY MIDCAP 150 MOMENTUM 50 INDEX FUND-DIRECT PLAN-GROWTH",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 14.5,
+      "id": 212
+    },
+    {
+      "Symbol": "KOTAK NIFTY ALPHA 50 INDEX FUND - DIRECT PLAN - GROWTH",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 18.1,
+      "id": 213
+    },
+    {
+      "Symbol": "NIPPON INDIA NIFTY 50 VALUE 20 INDEX FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 21.7,
+      "id": 214
+    },
+    {
+      "Symbol": "KOTAK NIFTY500 MOMENTUM 50 INDEX FUND - DIRECT PLAN - GROWTH",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 30,
+      "id": 215
+    },
+    {
+      "Symbol": "JIOBLACKROCK NIFTY 50 INDEX FUND - DIRECT PLAN - GROWTH OPTION",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 0,
+      "id": 216
+    },
+    {
+      "Symbol": "GOLDBEES",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 0,
+      "id": 217
+    },
+    {
+      "Symbol": "EDELWEISS GOLD AND SILVER ETF FOF - DIRECT PLAN - GROWTH",
+      "Portfolio": "Debt Repayment",
+      "Allocation": 100,
+      "id": 218
+    }
+  ]
+}
