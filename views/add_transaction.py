@@ -53,6 +53,11 @@ def generate_transaction_template(portfolios, symbols) -> bytes:
 
     # Headers
     ws.append(["Portfolio", "Symbol", "Type", "Qty", "Avg", "Date"])
+    
+    # Add a clear note about Date format
+    from openpyxl.styles import Font
+    ws["G1"] = "← NOTE: Please enter Date in DD-MM-YYYY format (e.g., 25-12-2023)"
+    ws["G1"].font = Font(italic=True, color="0000FF") # Blue italic font
 
     # ── Hidden reference sheet for long dropdown lists ────────────────────────
     ref_ws = wb.create_sheet("_Ref")
@@ -144,7 +149,15 @@ if uploaded_file is not None:
                         ttype = str(row["Type"]).strip().capitalize()
                         qty   = float(row["Qty"])
                         avg   = float(row["Avg"])
-                        date  = str(row["Date"]).strip()[:10]  # Ensure YYYY-MM-DD
+                        
+                        raw_date = str(row["Date"]).strip()
+                        try:
+                            # Parse date safely (assuming dayfirst for Indian format / common input)
+                            # and convert to Supabase expected ISO format YYYY-MM-DD
+                            date = pd.to_datetime(raw_date, dayfirst=True).strftime("%Y-%m-%d")
+                        except Exception:
+                            # Fallback if unparseable, though this might cause DB error
+                            date = raw_date[:10]
 
                         if ttype == "Buy":
                             ok = db.add_buy_transaction(

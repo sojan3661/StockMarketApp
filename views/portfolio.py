@@ -57,22 +57,45 @@ def get_nav(nav_df, fund_name):
     return None
 
 def get_stock_info(symbol):
+    price = None
+    pe = None
+    
+    # 1. Try NSEPython first
     if nse_eq:
         try:
             quote = nse_eq(symbol)
-            price = None
-            pe = None
-            
-            if 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
+            if quote and 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
                 price = float(quote['priceInfo']['lastPrice'])
             
-            if 'metadata' in quote and 'pdSymbolPe' in quote['metadata']:
+            if quote and 'metadata' in quote and 'pdSymbolPe' in quote['metadata']:
                 pe = float(quote['metadata']['pdSymbolPe'])
                 
-            return price, pe
+            if price and price > 0:
+                return price, pe
         except Exception:
             pass
-    return None, None
+
+    # 2. Yahoo Finance Fallback if NSE failed or returned no valid price
+    import urllib.request
+    import json
+    import ssl
+    
+    for suffix in [".NS", ".BO", ""]:
+        try:
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}{suffix}?interval=1d&range=1d"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            context = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, context=context, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                if data.get("chart", {}).get("result"):
+                    meta = data["chart"]["result"][0]["meta"]
+                    fallback_price = float(meta.get("regularMarketPrice", 0.0))
+                    if fallback_price and fallback_price > 0:
+                        return fallback_price, pe
+        except Exception:
+            continue
+            
+    return price, pe
 
 st.title("Portfolio Overview")
 
@@ -370,10 +393,12 @@ else:
                             display_hist[date_col], errors="coerce"
                         ).dt.strftime("%d-%b-%Y")
 
-                    st.dataframe(
+                    event_hist = st.dataframe(
                         display_hist,
                         use_container_width=True,
                         hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row",
                         key=f"history_grid_{port_name}",
                         column_config={
                             "BuyDate": "Buy Date",
@@ -383,3 +408,80 @@ else:
                             "SellAvg": st.column_config.NumberColumn("Sell Price", format="₹ %.2f"),
                         }
                     )
+                    
+                    selected_hist_rows = event_hist.selection.rows
+                    if selected_hist_rows:
+                        selected_hist_index = selected_hist_rows[0]
+                        tx_id = hist_df.iloc[selected_hist_index].get("id")
+                        sell_date = hist_df.iloc[selected_hist_index].get("SellDate")
+                        
+                        if tx_id:
+                            st.write("") # Spacing
+                            action_col1, action_col2 = st.columns([1, 2])
+                            
+                            with action_col1:
+                                if pd.isna(sell_date) or sell_date is None:
+                                    action_label = "🗑️ Delete Buy Transaction"
+                                    help_text = "This will permanently delete this buy transaction."
+                                else:
+                                    action_label = "🗑️ Delete Sell Details"
+                                    help_text = "This will remove the sell date and sell rate, converting it back to an open buy transaction."
+                                    
+                                if st.button(action_label, type="primary", help=help_text, key=f"del_tx_{tx_id}_{port_name}"):
+                                    with st.spinner("Processing..."):
+                                        if pd.isna(sell_date) or sell_date is None:
+                                            success = db.delete_transaction(tx_id)
+                                        else:
+                                            success = db.revert_sell_transaction(tx_id)
+                                            
+                                        if success:
+                                            st.success("Transaction updated successfully!")
+                                            get_portfolio_display_data.clear()
+                                            st.rerun()
+
+                            with action_col2:
+                                with st.expander("✏️ Edit Transaction"):
+                                    row_data = hist_df.iloc[selected_hist_index]
+                                    with st.form(key=f"edit_form_{tx_id}_{port_name}"):
+                                        try:
+                                            b_date_val = pd.to_datetime(row_data.get("BuyDate")).date()
+                                        except:
+                                            b_date_val = None
+                                            
+                                        s_date_val = None
+                                        if not pd.isna(row_data.get("SellDate")) and row_data.get("SellDate") is not None:
+                                            try:
+                                                s_date_val = pd.to_datetime(row_data.get("SellDate")).date()
+                                            except:
+                                                s_date_val = None
+
+                                        new_qty = st.number_input("Quantity", value=float(row_data.get("Qty", 0.0)), format="%.4f")
+                                        new_buy_avg = st.number_input("Buy Price", value=float(row_data.get("BuyAvg", 0.0)), format="%.2f")
+                                        new_buy_date = st.date_input("Buy Date", value=b_date_val)
+                                        
+                                        has_sell = not pd.isna(row_data.get("SellAvg")) and row_data.get("SellAvg") is not None
+                                        
+                                        new_sell_avg = None
+                                        new_sell_date = None
+                                        
+                                        if has_sell:
+                                            new_sell_avg = st.number_input("Sell Price", value=float(row_data.get("SellAvg", 0.0)), format="%.2f")
+                                            new_sell_date = st.date_input("Sell Date", value=s_date_val)
+                                            
+                                        submit_edit = st.form_submit_button("Update Transaction")
+                                        if submit_edit:
+                                            sell_d_str = new_sell_date.strftime("%Y-%m-%d") if new_sell_date else None
+                                            buy_d_str = new_buy_date.strftime("%Y-%m-%d") if new_buy_date else None
+                                            
+                                            success = db.update_transaction(
+                                                tx_id=tx_id, 
+                                                qty=new_qty, 
+                                                buy_avg=new_buy_avg, 
+                                                buy_date=buy_d_str, 
+                                                sell_date=sell_d_str, 
+                                                sell_avg=new_sell_avg
+                                            )
+                                            if success:
+                                                st.success("Transaction updated successfully!")
+                                                get_portfolio_display_data.clear()
+                                                st.rerun()
