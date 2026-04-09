@@ -77,12 +77,14 @@ def get_stock_info(symbol):
 
     # 2. Yahoo Finance Fallback if NSE failed or returned no valid price
     import urllib.request
+    import urllib.parse
     import json
     import ssl
     
     for suffix in [".NS", ".BO", ""]:
         try:
-            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}{suffix}?interval=1d&range=1d"
+            encoded_sym = urllib.parse.quote(symbol)
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             context = ssl._create_unverified_context()
             with urllib.request.urlopen(req, context=context, timeout=5) as response:
@@ -155,6 +157,13 @@ def get_portfolio_display_data(db_stocks, open_transactions, nav_df, port_stock_
             else:
                 fetched_nav = get_nav(nav_df, sym)
                 live_price = float(fetched_nav) if fetched_nav is not None else 0.0
+                
+                # Fallback: If it's a Mutual Fund (e.g., an ETF like GOLDBEES), 
+                # but get_nav couldn't find it in AMFI, try fetching live market price.
+                if live_price == 0.0:
+                    fetched_price, _ = get_stock_info(sym)
+                    if fetched_price is not None and fetched_price > 0:
+                        live_price = fetched_price
         else:
             live_price = float(p.get("LTP") or 0.0)
         
