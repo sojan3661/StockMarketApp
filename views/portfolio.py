@@ -210,39 +210,53 @@ if not db_stocks:
 elif not portfolio_names:
     st.info("No investment plans found. Create a portfolio in the Build Portfolio page first.")
 else:
-    tabs = st.tabs(portfolio_names)
+    tab_names = ["Overall Portfolio"] + portfolio_names
+    tabs = st.tabs(tab_names)
     
-    for i, port_name in enumerate(portfolio_names):
+    for i, port_name in enumerate(tab_names):
         with tabs[i]:
             st.divider()
             st.subheader(f"Assets for {port_name}")
             
-            # Filter stock targets for this specific portfolio (only allocation > 0)
-            port_stock_allocations = {
-                a["Symbol"]: a["Allocation"]
-                for a in db_stock_allocations
-                if a.get("Portfolio") == port_name and a.get("Symbol") and (a.get("Allocation") or 0) > 0
-            }
-            
-            # Filter sector targets for this specific portfolio
-            port_sector_allocations = {
-                a["Sector"]: a["Allocation"]
-                for a in db_sector_allocations
-                if a.get("Portfolio") == port_name and a.get("Sector") and (a.get("Allocation") or 0) > 0
-            }
-            
-            # Get mapping of symbol to sector
-            symbol_to_sector = {s.get("Symbol"): s.get("Sector") for s in db_stocks if s.get("Symbol")}
-            
-            # Only show assets mapped to this portfolio in StockAllocation
-            mapped_symbols = set(port_stock_allocations.keys())
-            port_stocks = [s for s in db_stocks if s.get("Symbol") in mapped_symbols]
-            
-            # Filter open transactions for this specific portfolio
-            port_open_transactions = [
-                tx for tx in open_transactions 
-                if tx.get("Portfolio") == port_name
-            ]
+            if port_name == "Overall Portfolio":
+                port_stock_allocations = {}
+                port_sector_allocations = {}
+                symbol_to_sector = {s.get("Symbol"): s.get("Sector") for s in db_stocks if s.get("Symbol")}
+                
+                # Show all assets that have open transactions across any portfolio
+                tx_symbols = {tx.get("Symbol") for tx in open_transactions}
+                port_stocks = [s for s in db_stocks if s.get("Symbol") in tx_symbols]
+                port_open_transactions = open_transactions
+            else:
+                # Filter stock targets for this specific portfolio (only allocation > 0)
+                port_stock_allocations = {
+                    a["Symbol"]: a["Allocation"]
+                    for a in db_stock_allocations
+                    if a.get("Portfolio") == port_name and a.get("Symbol") and (a.get("Allocation") or 0) > 0
+                }
+                
+                # Filter sector targets for this specific portfolio
+                port_sector_allocations = {
+                    a["Sector"]: a["Allocation"]
+                    for a in db_sector_allocations
+                    if a.get("Portfolio") == port_name and a.get("Sector") and (a.get("Allocation") or 0) > 0
+                }
+                
+                # Get mapping of symbol to sector
+                symbol_to_sector = {s.get("Symbol"): s.get("Sector") for s in db_stocks if s.get("Symbol")}
+                
+                # Only show assets mapped to this portfolio in StockAllocation or that have open transactions
+                mapped_symbols = set(port_stock_allocations.keys())
+                tx_symbols = {tx.get("Symbol") for tx in open_transactions if tx.get("Portfolio") == port_name}
+                valid_symbols = mapped_symbols.union(tx_symbols)
+                
+                port_stocks = [s for s in db_stocks if s.get("Symbol") in valid_symbols]
+                
+                # Filter open transactions for this specific portfolio
+                port_open_transactions = [
+                    tx for tx in open_transactions 
+                    if tx.get("Portfolio") == port_name
+                ]
             
             # Tuple conversion so it is hashable for st.cache_data
             port_alloc_tuple = tuple(port_stock_allocations.items())
@@ -383,7 +397,10 @@ else:
                 st.subheader(f"Order History: {selected_name} ({selected_symbol})")
                 
                 with st.spinner(f"Loading transaction history for {selected_symbol}..."):
-                    history = db.fetch_transactions_by_symbol(selected_symbol, portfolio=port_name)
+                    if port_name == "Overall Portfolio":
+                        history = db.fetch_transactions_by_symbol(selected_symbol)
+                    else:
+                        history = db.fetch_transactions_by_symbol(selected_symbol, portfolio=port_name)
                     
                 if not history:
                     st.info("No transaction history found for this asset.")
