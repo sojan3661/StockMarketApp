@@ -48,15 +48,40 @@ def get_nav(nav_df, fund_name):
     return result.iloc[0] if not result.empty else None
 
 def get_stock_price(symbol):
+    price = None
     if nse_eq:
         try:
             quote = nse_eq(symbol)
-            if 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
-                return quote['priceInfo']['lastPrice']
-        except Exception as e:
-            # Revert to gentle handling in case symbol doesn't exist
+            if quote and 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
+                price = float(quote['priceInfo']['lastPrice'])
+            if price and price > 0:
+                return price
+        except Exception:
             pass
-    return None
+            
+    # Yahoo Finance Fallback
+    import urllib.request
+    import urllib.parse
+    import json
+    import ssl
+    
+    for suffix in [".NS", ".BO", ""]:
+        try:
+            encoded_sym = urllib.parse.quote(symbol)
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            context = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, context=context, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                if data.get("chart", {}).get("result"):
+                    meta = data["chart"]["result"][0]["meta"]
+                    fallback_price = float(meta.get("regularMarketPrice", 0.0))
+                    if fallback_price > 0:
+                        return fallback_price
+        except Exception:
+            continue
+            
+    return price
 
 st.title("Asset Management")
 
@@ -121,31 +146,51 @@ def generate_asset_template(sectors) -> bytes:
 def search_stock_dialog():
     search_sym = st.text_input("Enter Stock Symbol (e.g. RELIANCE, TCS):")
     if search_sym:
-        with st.spinner("Fetching data from NSE..."):
-            try:
-                if nse_eq:
-                    quote = nse_eq(search_sym.upper())
-                    
+        search_sym = search_sym.upper()
+        with st.spinner("Fetching data..."):
+            price, pe, company = None, "N/A", search_sym
+            
+            # 1. Try NSE
+            if nse_eq:
+                try:
+                    quote = nse_eq(search_sym)
                     if quote and 'priceInfo' in quote:
-                        price = quote['priceInfo'].get('lastPrice', 'N/A')
-                        company = quote.get('info', {}).get('companyName', search_sym.upper())
-                        
-                        pe = "N/A"
+                        price = quote['priceInfo'].get('lastPrice')
+                        company = quote.get('info', {}).get('companyName', search_sym)
                         if 'metadata' in quote:
                             md = quote['metadata']
                             pe = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe', 'N/A')
-                            
-                        st.success(f"**{company}** ({search_sym.upper()})")
+                except Exception:
+                    pass
+                    
+            # 2. Try YF Fallback if NSE failed
+            if not price:
+                import urllib.request, urllib.parse, json, ssl
+                for suffix in [".NS", ".BO", ""]:
+                    try:
+                        encoded_sym = urllib.parse.quote(search_sym)
+                        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
+                        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                        context = ssl._create_unverified_context()
+                        with urllib.request.urlopen(req, context=context, timeout=5) as response:
+                            data = json.loads(response.read().decode('utf-8'))
+                            if data.get("chart", {}).get("result"):
+                                meta = data["chart"]["result"][0]["meta"]
+                                f_price = float(meta.get("regularMarketPrice", 0.0))
+                                if f_price > 0:
+                                    price = f_price
+                                    # Try to fetch PE from yahoo finance chart or info API if needed
+                                    break
+                    except Exception:
+                        continue
                         
-                        m1, m2 = st.columns(2)
-                        m1.metric("Live Price", f"₹ {price}")
-                        m2.metric("PE Ratio", f"{pe}")
-                    else:
-                        st.error(f"Could not fetch details for {search_sym.upper()}. Invalid symbol.")
-                else:
-                    st.error("nsepython library is not loaded.")
-            except Exception as e:
-                st.error(f"Error fetching data. Check symbol spelling.")
+            if price:
+                st.success(f"**{company}** ({search_sym})")
+                m1, m2 = st.columns(2)
+                m1.metric("Live Price", f"₹ {price}")
+                m2.metric("PE Ratio", f"{pe}")
+            else:
+                st.error(f"Could not fetch details for {search_sym}. Invalid symbol or server blocked.")
 
 st.subheader("Bulk Import Assets")
 col_dl, col_ul, col_search = st.columns([1, 1, 1])

@@ -54,11 +54,41 @@ def load_nav_data():
 # -----------------------------
 @st.cache_data(ttl=600)
 def get_stock_price(symbol):
-    try:
-        data = nse_eq(symbol)
-        return data["priceInfo"]["lastPrice"]
-    except:
-        return 0
+    price = 0.0
+    
+    if nse_eq:
+        try:
+            quote = nse_eq(symbol)
+            if quote and 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
+                price = float(quote['priceInfo']['lastPrice'])
+            if price > 0:
+                return price
+        except Exception:
+            pass
+            
+    # Yahoo Finance Fallback
+    import urllib.request
+    import urllib.parse
+    import json
+    import ssl
+    
+    for suffix in [".NS", ".BO", ""]:
+        try:
+            encoded_sym = urllib.parse.quote(symbol)
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            context = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, context=context, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                if data.get("chart", {}).get("result"):
+                    meta = data["chart"]["result"][0]["meta"]
+                    fallback_price = float(meta.get("regularMarketPrice", 0.0))
+                    if fallback_price > 0:
+                        return fallback_price
+        except Exception:
+            continue
+            
+    return price
 
 
 # -----------------------------
