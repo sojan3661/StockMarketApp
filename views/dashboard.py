@@ -80,21 +80,49 @@ def get_nav(nav_df, fund_name):
 @st.cache_data(ttl=600)
 def get_stock_info(symbol):
     """Returns (price, pe_ratio) for a stock."""
+    price = None
+    pe = None
+
     if nse_eq:
         try:
             quote = nse_eq(symbol)
-            price = float(quote["priceInfo"]["lastPrice"])
-            pe = None
-            if 'metadata' in quote:
+            if quote and 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
+                price = float(quote["priceInfo"]["lastPrice"])
+            
+            if quote and 'metadata' in quote:
                 md = quote['metadata']
                 # Try multiple possible keys for PE
-                pe = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe')
-                if pe is not None:
-                    pe = float(pe)
-            return price, pe
+                pe_raw = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe')
+                if pe_raw is not None:
+                    pe = float(pe_raw)
+            if price and price > 0:
+                return price, pe
         except Exception:
             pass
-    return 0.0, None
+
+    # Yahoo Finance Fallback if NSE failed or returned no valid price
+    import urllib.request
+    import urllib.parse
+    import json
+    import ssl
+    
+    for suffix in [".NS", ".BO", ""]:
+        try:
+            encoded_sym = urllib.parse.quote(symbol)
+            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            context = ssl._create_unverified_context()
+            with urllib.request.urlopen(req, context=context, timeout=5) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                if data.get("chart", {}).get("result"):
+                    meta = data["chart"]["result"][0]["meta"]
+                    fallback_price = float(meta.get("regularMarketPrice", 0.0))
+                    if fallback_price and fallback_price > 0:
+                        return fallback_price, pe
+        except Exception:
+            continue
+            
+    return price or 0.0, pe
 
 
 @st.cache_data(ttl=86400) # Cache for 24 hours
