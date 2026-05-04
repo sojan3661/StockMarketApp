@@ -24,6 +24,7 @@ with st.spinner("Loading available assets & portfolios..."):
     db_investment_plan = db.fetch_investment_plan()
     open_transactions = db.fetch_open_transactions()
     db_allocations = db.fetch_allocations()
+    db_currency_pairs = db.fetch_currency_pairs()
     
 # Create a list of available portfolios
 if not db_investment_plan:
@@ -38,6 +39,51 @@ if not db_stocks:
     st.info("No assets found in your portfolio yet. Go to 'Stock Management' to start adding assets before recording transactions.")
 else:
     available_symbols = sorted([p.get("Symbol", "") for p in db_stocks if p.get("Symbol", "")])
+
+# -----------------------------
+# Currency Conversion Helpers
+# -----------------------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_exchange_rate(pair_currency, date_str):
+    try:
+        import yfinance as yf
+        dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        end_dt = dt + datetime.timedelta(days=5)
+        ticker = yf.Ticker(f"{pair_currency}=X")
+        hist = ticker.history(start=dt.strftime("%Y-%m-%d"), end=end_dt.strftime("%Y-%m-%d"))
+        if not hist.empty:
+            return float(hist.iloc[0]['Close'])
+    except Exception as e:
+        print(f"Error fetching {pair_currency}: {e}")
+    return None
+
+def compute_converted_values(symbol, price, date_str, db_stocks, db_currency_pairs):
+    country = "INDIA"
+    for s in db_stocks:
+        if s.get("Symbol") == symbol:
+            country = s.get("Country", "INDIA")
+            break
+            
+    local_avg_value = price
+    usd_avg_value = price
+    
+    if country.upper() != "INDIA" and country:
+        pair_currency = None
+        for cp in db_currency_pairs:
+            if cp.get("Country", "").upper() == country.upper():
+                pair_currency = cp.get("PairCurrency")
+                break
+        
+        if pair_currency:
+            rate = fetch_exchange_rate(pair_currency, date_str)
+            if rate is not None:
+                local_avg_value = price * rate
+                
+    usdinr_rate = fetch_exchange_rate("USDINR", date_str)
+    if usdinr_rate is not None:
+        usd_avg_value = local_avg_value / usdinr_rate
+        
+    return local_avg_value, usd_avg_value
 
 # -----------------------------
 # Bulk Upload Processing
@@ -160,20 +206,26 @@ if uploaded_file is not None:
                             date = raw_date[:10]
 
                         if ttype == "Buy":
+                            local_val, usd_val = compute_converted_values(sym, avg, date, db_stocks, db_currency_pairs)
                             ok = db.add_buy_transaction(
                                 symbol=sym,
                                 quantity=qty,
                                 price=avg,
                                 date=date,
-                                portfolio=port
+                                portfolio=port,
+                                buy_avg_local=local_val,
+                                buy_avg_usd=usd_val
                             )
                         elif ttype == "Sell":
+                            local_val, usd_val = compute_converted_values(sym, avg, date, db_stocks, db_currency_pairs)
                             ok = db.process_sell_transaction(
                                 symbol=sym,
                                 sell_qty=qty,
                                 sell_avg=avg,
                                 sell_date=date,
-                                portfolio=port
+                                portfolio=port,
+                                sell_avg_local=local_val,
+                                sell_avg_usd=usd_val
                             )
                         else:
                             st.warning(f"Row {i+2}: Unknown Type '{ttype}' — skipped.")
@@ -223,6 +275,8 @@ def mf_calc_dialog(q_key, p_key, tx_type):
         st.session_state[q_key] = float(calc_qty)
         st.session_state[p_key] = float(calc_total / calc_qty) if calc_qty > 0 else 0.0
         st.rerun()
+
+
 
 with container:
     col1, col2 = st.columns(2)
@@ -313,16 +367,21 @@ with container:
         
     with col2:
         price = st.number_input(
-            "Price per unit (₹)",
+            "Price per unit",
             min_value=0.01,
             step=1.0,
             format="%.2f",
             help="The price at which the asset was bought or sold.",
             key=f"price_{st.session_state['tx_form_key']}"
         )
+        
+        loc_key = f"local_val_{st.session_state['tx_form_key']}"
+        usd_key = f"usd_val_{st.session_state['tx_form_key']}"
+        if loc_key in st.session_state:
+            st.success(f"Local Value: ₹{st.session_state[loc_key]:.2f} | USD Value: ${st.session_state[usd_key]:.2f}")
 
     # Submission
-    submitted = st.button("💾 Save Transaction", type="primary", use_container_width=False)
+    submitted = st.button("💾 Save Transaction", type="primary", use_container_width=True)
 
 if submitted:
     if not available_symbols:
@@ -334,13 +393,24 @@ if submitted:
         formatted_date = transaction_date.strftime("%Y-%m-%d")
         
         with st.spinner(f"Processing {transaction_type} transaction..."):
+            loc_key = f"local_val_{st.session_state['tx_form_key']}"
+            usd_key = f"usd_val_{st.session_state['tx_form_key']}"
+            
+            if loc_key in st.session_state and usd_key in st.session_state:
+                local_val = st.session_state.get(loc_key)
+                usd_val = st.session_state.get(usd_key)
+            else:
+                local_val, usd_val = compute_converted_values(selected_symbol, float(price), formatted_date, db_stocks, db_currency_pairs)
+
             if transaction_type == "Buy":
                 success = db.add_buy_transaction(
                     symbol=selected_symbol,
                     quantity=float(quantity),
                     price=float(price),
                     date=formatted_date,
-                    portfolio=selected_portfolio
+                    portfolio=selected_portfolio,
+                    buy_avg_local=local_val,
+                    buy_avg_usd=usd_val
                 )
             else:
                 success = db.process_sell_transaction(
@@ -348,7 +418,9 @@ if submitted:
                     sell_qty=float(quantity),
                     sell_avg=float(price),
                     sell_date=formatted_date,
-                    portfolio=selected_portfolio
+                    portfolio=selected_portfolio,
+                    sell_avg_local=local_val,
+                    sell_avg_usd=usd_val
                 )
             
         if success:

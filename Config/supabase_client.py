@@ -261,7 +261,7 @@ class SupabaseClient:
             st.error(f"Error fetching stocks: {e}")
             return []
 
-    def add_stock(self, symbol, name, is_equity, sector, is_listed=True, market_cap="NA", ltp=None):
+    def add_stock(self, symbol, name, is_equity, sector, is_listed=True, market_cap="NA", ltp=None, country=None):
         """Adds a new stock to the StockManagement table."""
         headers = self._get_headers()
         if not headers:
@@ -275,7 +275,8 @@ class SupabaseClient:
             "Sector": sector,
             "Listed": is_listed,
             "MarketCap": market_cap,
-            "LTP": ltp
+            "LTP": ltp,
+            "Country": country
         }
         
         try:
@@ -331,7 +332,7 @@ class SupabaseClient:
             st.error(f"Error deleting stock: {e}")
             return False
 
-    def update_stock(self, symbol, name, is_equity, sector, is_listed, market_cap, ltp=None):
+    def update_stock(self, symbol, name, is_equity, sector, is_listed, market_cap, ltp=None, country=None):
         """Updates an existing stock record in StockManagement by Symbol (primary key)."""
         headers = self._get_headers()
         if not headers:
@@ -347,7 +348,8 @@ class SupabaseClient:
             "Sector": sector,
             "Listed": is_listed,
             "MarketCap": market_cap,
-            "LTP": ltp
+            "LTP": ltp,
+            "Country": country
         }
 
         try:
@@ -364,7 +366,7 @@ class SupabaseClient:
             st.error(f"Error updating stock: {e}")
             return False
 
-    def update_stock_symbol(self, old_symbol, new_symbol, name, is_equity, sector, is_listed, market_cap, ltp=None):
+    def update_stock_symbol(self, old_symbol, new_symbol, name, is_equity, sector, is_listed, market_cap, ltp=None, country=None):
         """
         Updates a stock symbol by creating a new record and migrating dependent records
         (Transactions, StockAllocations) to the new symbol, then deleting the old one.
@@ -375,7 +377,7 @@ class SupabaseClient:
              return False, "Not Configured"
              
         # 1. First, try to insert the new Symbol into StockManagement
-        insert_success = self.add_stock(new_symbol, name, is_equity, sector, is_listed, market_cap, ltp)
+        insert_success = self.add_stock(new_symbol, name, is_equity, sector, is_listed, market_cap, ltp, country)
         if not insert_success:
              return False, f"Failed to create new symbol '{new_symbol}'. It may already exist."
              
@@ -549,7 +551,104 @@ class SupabaseClient:
             st.error(f"Error fetching transactions for {symbol}: {e}")
             return []
 
-    def add_buy_transaction(self, symbol, quantity, price, date, portfolio=None):
+    def fetch_currency_pairs(self):
+        """Fetches all currency pairs from the CurrencyPair table."""
+        headers = self._get_headers()
+        if not headers:
+            return []
+            
+        endpoint = f"{self.url}/rest/v1/CurrencyPair?select=*"
+        try:
+            response = requests.get(endpoint, headers=headers)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            st.error(f"Error fetching currency pairs: {e}")
+            return []
+
+    def add_currency_pair(self, country, base_currency, pair_currency=None, symbol=None):
+        """Adds a new currency pair to the CurrencyPair table."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        endpoint = f"{self.url}/rest/v1/CurrencyPair"
+        data = {
+            "Country": country,
+            "BaseCurrency": base_currency,
+            "PairCurrency": pair_currency,
+            "Symbol": symbol
+        }
+        
+        try:
+            response = requests.post(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked this insert in CurrencyPair.")
+            else:
+                st.error(f"Error adding currency pair: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error adding currency pair: {e}")
+            return False
+
+    def update_currency_pair(self, country, base_currency, pair_currency=None, symbol=None):
+        """Updates an existing currency pair by its Country (Primary Key)."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        from urllib.parse import quote
+        safe_country = quote(str(country).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/CurrencyPair?Country=eq.{safe_country}"
+        
+        data = {
+            "BaseCurrency": base_currency,
+            "PairCurrency": pair_currency,
+            "Symbol": symbol
+        }
+        
+        try:
+            response = requests.patch(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked this update in CurrencyPair.")
+            else:
+                st.error(f"Error updating currency pair: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error updating currency pair: {e}")
+            return False
+
+    def delete_currency_pair(self, country):
+        """Deletes a currency pair by its Country."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+            
+        from urllib.parse import quote
+        safe_country = quote(str(country).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/CurrencyPair?Country=eq.{safe_country}"
+        
+        try:
+            response = requests.delete(endpoint, headers=headers)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked this deletion in CurrencyPair.")
+            else:
+                st.error(f"Error deleting currency pair: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error deleting currency pair: {e}")
+            return False
+
+    def add_buy_transaction(self, symbol, quantity, price, date, portfolio=None, buy_avg_local=None, buy_avg_usd=None):
         """Adds a new recorded BUY transaction to the Transactions table."""
         headers = self._get_headers()
         if not headers:
@@ -560,7 +659,9 @@ class SupabaseClient:
             "Symbol": symbol,
             "Qty": quantity,
             "BuyAvg": price,
-            "BuyDate": date
+            "BuyDate": date,
+            "BuyAvgToLocal": buy_avg_local,
+            "BuyAvgUSD": buy_avg_usd
             # SellDate and SellAvg remain null automatically
         }
         
@@ -581,7 +682,7 @@ class SupabaseClient:
             st.error(f"Error adding buy transaction: {e}")
             return False
 
-    def process_sell_transaction(self, symbol, sell_qty, sell_avg, sell_date, portfolio=None):
+    def process_sell_transaction(self, symbol, sell_qty, sell_avg, sell_date, portfolio=None, sell_avg_local=None, sell_avg_usd=None):
         """Processes a SELL by matching it against open BUYS (FIFO)."""
         headers = self._get_headers()
         if not headers:
@@ -631,7 +732,9 @@ class SupabaseClient:
                     patch_url = f"{base_endpoint}?id=eq.{row_id}"
                     patch_data = {
                         "SellDate": sell_date,
-                        "SellAvg": sell_avg
+                        "SellAvg": sell_avg,
+                        "SellAvgLocal": sell_avg_local,
+                        "SellAvgUSD": sell_avg_usd
                     }
                     p_res = requests.patch(patch_url, headers=headers, json=patch_data)
                     p_res.raise_for_status()
@@ -651,8 +754,12 @@ class SupabaseClient:
                         "Symbol": symbol,
                         "BuyDate": row.get("BuyDate"),
                         "BuyAvg": row.get("BuyAvg"),
+                        "BuyAvgToLocal": row.get("BuyAvgToLocal"),
+                        "BuyAvgUSD": row.get("BuyAvgUSD"),
                         "SellDate": sell_date,
                         "SellAvg": sell_avg,
+                        "SellAvgLocal": sell_avg_local,
+                        "SellAvgUSD": sell_avg_usd,
                         "Qty": remaining_to_sell
                     }
                     if portfolio:

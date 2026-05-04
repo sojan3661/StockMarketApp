@@ -92,9 +92,14 @@ if not db.is_configured():
 with st.spinner("Loading Database data..."):
     sectors_data = db.fetch_sectors()
     stocks_data = db.fetch_stocks()
+    currency_pairs_data = db.fetch_currency_pairs()
 
 existing_sectors = [s.get('Sector', '') for s in sectors_data if s.get('Sector')]
 existing_symbols = [s.get('Symbol', '').upper() for s in stocks_data if s.get('Symbol')]
+
+available_countries = sorted([cp.get('Country') for cp in currency_pairs_data if cp.get('Country')])
+if not available_countries:
+    available_countries = ["INDIA"]
 
 # Load MF data silently into cache
 nav_df = load_nav_data()
@@ -332,6 +337,7 @@ with st.form("add_asset_form", clear_on_submit=False):
 
     with col2:
         sector_choice = st.selectbox("Sector", options=existing_sectors if existing_sectors else ["NA"])
+        country_choice = st.selectbox("Country", options=available_countries)
 
     # Submission
     submitted = st.form_submit_button("Preview & Add Asset", type="primary")
@@ -374,7 +380,7 @@ if submitted:
 
         # 2. Insert to DB
         if price_preview_success:
-            success = db.add_stock(stock_symbol, stock_name, is_equity, sector_choice, is_listed, market_cap, stock_ltp)
+            success = db.add_stock(stock_symbol, stock_name, is_equity, sector_choice, is_listed, market_cap, stock_ltp, country_choice)
             if success:
                 st.success(f"Successfully added: {stock_name} ({stock_symbol})")
                 if asset_type == "Mutual Fund":
@@ -403,6 +409,7 @@ else:
         a_type   = "Stock" if is_eq else "Mutual Fund"
         l_status = "Listed" if is_lst else "Unlisted"
         ltp      = item.get("LTP")
+        current_country = item.get("Country", "INDIA")
         
         # Adding a visual tag for Asset type and Listing status
         color_tag = "#3B82F6" if a_type == "Stock" else "#4ADE80"
@@ -430,6 +437,12 @@ else:
                             "Market Cap",
                             options=market_cap_options,
                             index=market_cap_options.index(mcap) if mcap in market_cap_options else len(market_cap_options) - 1
+                        )
+                        new_country = st.selectbox(
+                            "Country",
+                            options=available_countries,
+                            index=available_countries.index(current_country) if current_country in available_countries else 0,
+                            key=f"country_{sym}"
                         )
                     with ec2:
                         new_sector = st.selectbox(
@@ -472,7 +485,8 @@ else:
                                     sector=new_sector,
                                     is_listed=new_is_lst,
                                     market_cap=new_mcap,
-                                    ltp=new_ltp
+                                    ltp=new_ltp,
+                                    country=new_country
                                 )
                             if success:
                                 st.success(msg)
@@ -481,7 +495,7 @@ else:
                                 st.error(msg)
                         else:
                             # Standard Update
-                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap, new_ltp)
+                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap, new_ltp, new_country)
                             if ok:
                                 st.success(f"Updated '{sym}' successfully!")
                                 st.rerun()
