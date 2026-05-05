@@ -655,13 +655,19 @@ class SupabaseClient:
             return False
             
         endpoint = f"{self.url}/rest/v1/Transactions"
+        
+        buy_value = (buy_avg_local * quantity) if buy_avg_local is not None else None
+        buy_value_usd = (buy_avg_usd * quantity) if buy_avg_usd is not None else None
+        
         data = {
             "Symbol": symbol,
             "Qty": quantity,
             "BuyAvg": price,
             "BuyDate": date,
             "BuyAvgToLocal": buy_avg_local,
-            "BuyAvgUSD": buy_avg_usd
+            "BuyAvgUSD": buy_avg_usd,
+            "BuyValue": buy_value,
+            "BuyValueUSD": buy_value_usd
             # SellDate and SellAvg remain null automatically
         }
         
@@ -730,11 +736,17 @@ class SupabaseClient:
                 if remaining_to_sell >= row_qty:
                     # Fully consume this row
                     patch_url = f"{base_endpoint}?id=eq.{row_id}"
+                    
+                    sell_value = (sell_avg_local * row_qty) if sell_avg_local is not None else None
+                    sell_value_usd = (sell_avg_usd * row_qty) if sell_avg_usd is not None else None
+                    
                     patch_data = {
                         "SellDate": sell_date,
                         "SellAvg": sell_avg,
                         "SellAvgLocal": sell_avg_local,
-                        "SellAvgUSD": sell_avg_usd
+                        "SellAvgUSD": sell_avg_usd,
+                        "SellValue": sell_value,
+                        "SellValueUSD": sell_value_usd
                     }
                     p_res = requests.patch(patch_url, headers=headers, json=patch_data)
                     p_res.raise_for_status()
@@ -746,20 +758,42 @@ class SupabaseClient:
                     # A. Patch the original row to reduce its Qty (keeping it OPEN)
                     new_open_qty = row_qty - remaining_to_sell
                     patch_url = f"{base_endpoint}?id=eq.{row_id}"
-                    p_res = requests.patch(patch_url, headers=headers, json={"Qty": new_open_qty})
+                    
+                    buy_avg_local = row.get("BuyAvgToLocal")
+                    buy_avg_usd = row.get("BuyAvgUSD")
+                    
+                    new_buy_val = (buy_avg_local * new_open_qty) if buy_avg_local is not None else None
+                    new_buy_val_usd = (buy_avg_usd * new_open_qty) if buy_avg_usd is not None else None
+                    
+                    patch_data_a = {
+                        "Qty": new_open_qty,
+                        "BuyValue": new_buy_val,
+                        "BuyValueUSD": new_buy_val_usd
+                    }
+                    p_res = requests.patch(patch_url, headers=headers, json=patch_data_a)
                     p_res.raise_for_status()
                     
                     # B. Post a new row for the SOLD portion
+                    buy_val_sold = (buy_avg_local * remaining_to_sell) if buy_avg_local is not None else None
+                    buy_val_usd_sold = (buy_avg_usd * remaining_to_sell) if buy_avg_usd is not None else None
+                    
+                    sell_val_sold = (sell_avg_local * remaining_to_sell) if sell_avg_local is not None else None
+                    sell_val_usd_sold = (sell_avg_usd * remaining_to_sell) if sell_avg_usd is not None else None
+                    
                     post_data = {
                         "Symbol": symbol,
                         "BuyDate": row.get("BuyDate"),
                         "BuyAvg": row.get("BuyAvg"),
                         "BuyAvgToLocal": row.get("BuyAvgToLocal"),
                         "BuyAvgUSD": row.get("BuyAvgUSD"),
+                        "BuyValue": buy_val_sold,
+                        "BuyValueUSD": buy_val_usd_sold,
                         "SellDate": sell_date,
                         "SellAvg": sell_avg,
                         "SellAvgLocal": sell_avg_local,
                         "SellAvgUSD": sell_avg_usd,
+                        "SellValue": sell_val_sold,
+                        "SellValueUSD": sell_val_usd_sold,
                         "Qty": remaining_to_sell
                     }
                     if portfolio:
