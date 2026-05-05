@@ -218,9 +218,21 @@ for i, port_name in enumerate(portfolio_names):
         expected_metric_placeholder = col2.empty()
         inflow_metric_placeholder = col3.empty()
             
-        show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
+        sip_months_key = f"sip_months_{port_name}"
+        if sip_months_key not in st.session_state:
+            st.session_state[sip_months_key] = 12
+
+        col_chk, col_pop, col_sip = st.columns([1, 1, 1])
+        with col_chk:
+            show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
+        with col_pop:
+            with st.popover("Change SIP Months"):
+                st.session_state[sip_months_key] = st.number_input("SIP Months", min_value=1, value=st.session_state[sip_months_key], key=f"input_{sip_months_key}")
+        
+        sip_total_placeholder = col_sip.empty()
         
         total_inflow = 0
+        total_sip_amount = 0
             
         if not db_sectors:
             st.info("No sectors found!")
@@ -280,6 +292,9 @@ for i, port_name in enumerate(portfolio_names):
                         
                         buy = math.ceil(inflow/price) if price > 0 else 0
                         
+                        sip_amount = expected / st.session_state[sip_months_key] if expected > 0 else 0
+                        total_sip_amount += sip_amount
+                        
                         rows.append({
                             "Symbol": sym,
                             "Name": name,
@@ -289,6 +304,7 @@ for i, port_name in enumerate(portfolio_names):
                             "Allocation %": alloc,
                             "Expected": expected,
                             "Inflow": inflow,
+                            "SIP Amount": sip_amount,
                             "Buy": buy
                         })
                         
@@ -327,9 +343,10 @@ for i, port_name in enumerate(portfolio_names):
                             "Invested": st.column_config.NumberColumn(format="₹%.2f"),
                             "Expected": st.column_config.NumberColumn(format="₹%.2f"),
                             "Inflow": st.column_config.NumberColumn(format="₹%.2f"),
+                            "SIP Amount": st.column_config.NumberColumn(format="₹%.2f"),
                         },
                         disabled=[
-                            "Symbol", "Name", "LTP", "Qty", "Invested", "Expected", "Inflow", "Buy"
+                            "Symbol", "Name", "LTP", "Qty", "Invested", "Expected", "Inflow", "SIP Amount", "Buy"
                         ]
                     )
                     
@@ -350,6 +367,7 @@ for i, port_name in enumerate(portfolio_names):
             displayed_expected_investment = current_invested + total_inflow
             expected_metric_placeholder.metric("🎯 Expected Investment", f"₹{displayed_expected_investment:,.2f}")
             inflow_metric_placeholder.metric("💵 Total Inflow", f"₹{total_inflow:,.2f}")
+            sip_total_placeholder.metric("📊 Total SIP Amount", f"₹{total_sip_amount:,.2f}")
             
             st.divider()
             submitted = st.form_submit_button(

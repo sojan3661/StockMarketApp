@@ -101,6 +101,14 @@ def get_stock_info(symbol):
 
 st.title("Portfolio Overview")
 
+if "view_in_usd" not in st.session_state:
+    st.session_state.view_in_usd = False
+
+def toggle_usd():
+    st.session_state.view_in_usd = not st.session_state.view_in_usd
+
+st.checkbox("View in USD", value=st.session_state.view_in_usd, on_change=toggle_usd, key="portfolio_usd_cb")
+
 # Verification check for credentials
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")

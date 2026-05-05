@@ -18,13 +18,14 @@ sector_allocation = st.Page("views/sector_allocation.py", title="Sector Allocati
 asset_management = st.Page("views/stock_management.py", title="Asset Management", icon="📈")
 portfolio_rebalancing = st.Page("views/portfolio_management.py", title="Portfolio Rebalancing", icon="💼")
 portfolio = st.Page("views/portfolio.py", title="Portfolio", icon="🌍")
+currency_pair = st.Page("views/currency_pair.py", title="Currency Pairs", icon="💱")
 add_transaction = st.Page("views/add_transaction.py", title="Add Transaction", icon="💸")
 pnl_report = st.Page("views/pnl_report.py", title="P&L Report", icon="🧾")
 performance_metric = st.Page("views/performance_metric.py", title="Performance Metric", icon="🎯")
 
 pages = [
     dashboard, build_portfolio, sector_management, sector_allocation, 
-    asset_management, portfolio_rebalancing, portfolio, add_transaction, pnl_report, performance_metric
+    asset_management, currency_pair, portfolio_rebalancing, portfolio, add_transaction, pnl_report, performance_metric
 ]
 
 pg = st.navigation(pages, position="hidden")

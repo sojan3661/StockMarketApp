@@ -18,17 +18,29 @@ from datetime import datetime, timedelta
 
 st.title("Dashboard")
 
+if "view_in_usd" not in st.session_state:
+    st.session_state.view_in_usd = False
+
+def toggle_usd():
+    st.session_state.view_in_usd = not st.session_state.view_in_usd
+
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.stop()
 
-# Cache bust button
-if st.button("🔄 Refresh Data", help="Reload live prices from NSE"):
-    for k in list(st.session_state.keys()):
-        if k.startswith("port_df_"):
-            del st.session_state[k]
-    st.cache_data.clear()
-    st.rerun()
+col1, col2 = st.columns([2, 8])
+with col1:
+    # Cache bust button
+    if st.button("🔄 Refresh Data", help="Reload live prices from NSE"):
+        for k in list(st.session_state.keys()):
+            if k.startswith("port_df_"):
+                del st.session_state[k]
+        st.cache_data.clear()
+        st.rerun()
+
+with col2:
+    st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
+    st.checkbox("View in USD", value=st.session_state.view_in_usd, on_change=toggle_usd, key="dashboard_usd_cb")
 
 # -----------------------------------------------
 # Cache helpers
