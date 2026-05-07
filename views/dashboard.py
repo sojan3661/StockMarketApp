@@ -23,6 +23,10 @@ if "view_in_usd" not in st.session_state:
 
 def toggle_usd():
     st.session_state.view_in_usd = not st.session_state.view_in_usd
+    # Clear cached portfolio dfs so they rebuild with correct currency
+    for k in list(st.session_state.keys()):
+        if k.startswith("port_df_"):
+            del st.session_state[k]
 
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
@@ -30,7 +34,6 @@ if not db.is_configured():
 
 col1, col2 = st.columns([2, 8])
 with col1:
-    # Cache bust button
     if st.button("🔄 Refresh Data", help="Reload live prices from NSE"):
         for k in list(st.session_state.keys()):
             if k.startswith("port_df_"):
@@ -72,26 +75,26 @@ def load_nav_data():
 def get_nav(nav_df, fund_name):
     if nav_df.empty or not fund_name:
         return 0.0
-        
+
     res = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav"]]
     if not res.empty:
         return float(res.iloc[0]["nav"])
-        
+
     res = nav_df.loc[nav_df["scheme_name"].str.lower() == fund_name.lower(), ["nav"]]
     if not res.empty:
         return float(res.iloc[0]["nav"])
-        
+
     short_name = fund_name[:15].lower()
     res = nav_df.loc[nav_df["scheme_name"].str.lower().str.contains(short_name, na=False, regex=False), ["nav"]]
     if not res.empty:
         return float(res.iloc[0]["nav"])
-        
+
     return 0.0
 
 
 @st.cache_data(ttl=600)
 def get_stock_info(symbol):
-    """Returns (price, pe_ratio) for a stock."""
+    """Returns (price, pe_ratio) for a stock. Price is always in its native currency."""
     price = None
     pe = None
 
@@ -100,10 +103,9 @@ def get_stock_info(symbol):
             quote = nse_eq(symbol)
             if quote and 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
                 price = float(quote["priceInfo"]["lastPrice"])
-            
+
             if quote and 'metadata' in quote:
                 md = quote['metadata']
-                # Try multiple possible keys for PE
                 pe_raw = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe')
                 if pe_raw is not None:
                     pe = float(pe_raw)
@@ -112,12 +114,12 @@ def get_stock_info(symbol):
         except Exception:
             pass
 
-    # Yahoo Finance Fallback if NSE failed or returned no valid price
+    # Yahoo Finance fallback
     import urllib.request
     import urllib.parse
     import json
     import ssl
-    
+
     for suffix in [".NS", ".BO", ""]:
         try:
             encoded_sym = urllib.parse.quote(symbol)
@@ -133,22 +135,51 @@ def get_stock_info(symbol):
                         return fallback_price, pe
         except Exception:
             continue
-            
+
     return price or 0.0, pe
 
 
-@st.cache_data(ttl=86400) # Cache for 24 hours
+@st.cache_data(ttl=300)
+def fetch_fx_rate(pair_symbol):
+    """
+    Fetch live FX rate for a Yahoo Finance currency pair symbol.
+    e.g. 'USDINR=X', 'GBPINR=X', 'EURINR=X'
+    Returns the rate as a float, or 0.0 on failure.
+    """
+    if not pair_symbol:
+        return 0.0
+    import urllib.request
+    import urllib.parse
+    import json
+    import ssl
+
+    try:
+        encoded = urllib.parse.quote(pair_symbol)
+        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=1d"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        context = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, context=context, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if data.get("chart", {}).get("result"):
+                meta = data["chart"]["result"][0]["meta"]
+                rate = float(meta.get("regularMarketPrice", 0.0))
+                if rate > 0:
+                    return rate
+    except Exception:
+        pass
+    return 0.0
+
+
+@st.cache_data(ttl=86400)
 def get_index_pe(index_name):
     """Fetches the latest PE for an index using nsepython."""
     if not index_pe_pb_div:
         return 0.0
     try:
-        # Fetch last 10 days to ensure we get a valid record
-        end = datetime.now().strftime('%d-%b-%Y')
+        end   = datetime.now().strftime('%d-%b-%Y')
         start = (datetime.now() - timedelta(days=10)).strftime('%d-%b-%Y')
         df = index_pe_pb_div(index_name, start, end)
         if df is not None and not df.empty:
-            # Column is 'pe' (lowercase) in recent nsepython versions
             latest_pe = df.iloc[0].get('pe') or df.iloc[0].get('PE')
             if latest_pe is not None:
                 return float(latest_pe)
@@ -161,12 +192,13 @@ def get_index_pe(index_name):
 # Load data
 # -----------------------------------------------
 with st.spinner("Loading dashboard data..."):
-    db_stocks        = db.fetch_stocks()
-    open_tx          = db.fetch_open_transactions()
-    db_stock_allocs  = db.fetch_stock_allocations()
-    db_sector_allocs = db.fetch_allocations()
-    db_plans         = db.fetch_investment_plan()
-    nav_df           = load_nav_data()
+    db_stocks         = db.fetch_stocks()
+    open_tx           = db.fetch_open_transactions()
+    db_stock_allocs   = db.fetch_stock_allocations()
+    db_sector_allocs  = db.fetch_allocations()
+    db_plans          = db.fetch_investment_plan()
+    db_currency_pairs = db.fetch_currency_pairs()   # list of CurrencyPair rows
+    nav_df            = load_nav_data()
 
 plans_list      = db_plans if isinstance(db_plans, list) else ([db_plans] if db_plans else [])
 portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
@@ -174,8 +206,112 @@ portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
 # Build fast lookups
 stocks_map = {s["Symbol"]: s for s in db_stocks}  # Symbol -> stock info
 
+# country (uppercase) -> CurrencyPair row
+# e.g. {"INDIA": {"BaseCurrency": "INR", "PairCurrency": "USD", "Symbol": "USDINR=X"}, ...}
+currency_pairs_map = {
+    cp["Country"].upper(): cp
+    for cp in (db_currency_pairs if isinstance(db_currency_pairs, list) else [])
+    if cp.get("Country")
+}
+
+# Pre-fetch all FX rates keyed by Yahoo pair symbol (e.g. "USDINR=X" -> 84.52)
+@st.cache_data(ttl=300)
+def build_fx_cache(cp_tuples):
+    """cp_tuples: tuple of (country, symbol) pairs (hashable for caching)."""
+    rates = {}
+    for _country, sym in cp_tuples:
+        if sym and sym not in rates:
+            rates[sym] = fetch_fx_rate(sym)
+    return rates
+
+_cp_tuples = tuple(sorted(
+    (c, cp.get("Symbol", "")) for c, cp in currency_pairs_map.items()
+))
+fx_rates = build_fx_cache(_cp_tuples)
+
+
+def _inr_per_unit(country):
+    """
+    How many INR = 1 unit of country's base currency.
+    For INDIA returns 1.0 (already INR).
+    For others: CurrencyPair table first, then built-in fallback map.
+    """
+    country = (country or "INDIA").upper()
+    if country == "INDIA":
+        return 1.0
+
+    # 1. CurrencyPair table lookup
+    cp  = currency_pairs_map.get(country, {})
+    sym = cp.get("Symbol", "")
+    if sym:
+        rate = fx_rates.get(sym) or fetch_fx_rate(sym)
+        if rate and rate > 0:
+            return rate
+
+    # 2. Built-in country -> Yahoo FX symbol fallback
+    _country_to_fx = {
+        "USA": "USDINR=X", "US": "USDINR=X",
+        "UK": "GBPINR=X",  "GB": "GBPINR=X",
+        "EU": "EURINR=X",  "EUROPE": "EURINR=X",
+        "HK": "HKDINR=X",  "HONG KONG": "HKDINR=X",
+        "JP": "JPYINR=X",  "JAPAN": "JPYINR=X",
+        "AU": "AUDINR=X",  "AUSTRALIA": "AUDINR=X",
+        "CA": "CADINR=X",  "CANADA": "CADINR=X",
+        "CH": "CHFINR=X",  "SWITZERLAND": "CHFINR=X",
+    }
+    fallback_sym = _country_to_fx.get(country)
+    if fallback_sym:
+        rate = fetch_fx_rate(fallback_sym)
+        if rate and rate > 0:
+            return rate
+
+    # 3. Nothing worked - warn and show native price
+    st.warning(f"⚠️ No FX rate found for country '{country}'. Live Price shown in native currency.")
+    return 1.0
+
+
+def _usdinr():
+    """How many INR = 1 USD. Used to convert any INR amount -> USD."""
+    # Look for a pair whose Symbol contains USDINR
+    for country, cp in currency_pairs_map.items():
+        sym = (cp.get("Symbol") or "").upper()
+        if "USDINR" in sym:
+            rate = fx_rates.get(cp["Symbol"], 0.0)
+            if rate > 0:
+                return rate
+    # Direct fetch as fallback
+    return fetch_fx_rate("USDINR=X") or 84.0
+
+
+def convert_price(native_price, country):
+    """
+    Convert native_price (in the stock's home currency) to the active display currency.
+
+    INR mode  (view_in_usd = False):
+      INDIA  -> return as-is  (already INR)
+      Other  -> multiply by <BaseCurrency>INR rate  (e.g. GBP * GBPINR)
+
+    USD mode  (view_in_usd = True):
+      INDIA  -> divide by USDINR
+      Other  -> convert to INR first, then divide by USDINR
+    """
+    use_usd = st.session_state.get("view_in_usd", False)
+    country = (country or "INDIA").upper()
+
+    if not use_usd:
+        # INR display
+        return native_price * _inr_per_unit(country)   # 1.0 for INDIA
+    else:
+        # USD display
+        usd_inr = _usdinr()
+        if usd_inr <= 0:
+            usd_inr = 84.0
+        inr_price = native_price * _inr_per_unit(country)
+        return inr_price / usd_inr
+
+
 # Aggregate open transactions by (Portfolio, Symbol)
-tx_agg = {}   # (portfolio, symbol) -> {Qty, InvestedTotal}
+tx_agg = {}   # (portfolio, symbol) -> {Qty, InvestedTotal, InvestedTotalUSD}
 for tx in open_tx:
     port = tx.get("Portfolio", "")
     sym  = tx.get("Symbol", "")
@@ -183,36 +319,47 @@ for tx in open_tx:
         continue
     key = (port, sym)
     if key not in tx_agg:
-        tx_agg[key] = {"Qty": 0.0, "InvestedTotal": 0.0}
-    qty      = float(tx.get("Qty", 0))
-    buy_avg  = float(tx.get("BuyAvg", 0))
-    tx_agg[key]["Qty"]           += qty
-    tx_agg[key]["InvestedTotal"] += qty * buy_avg
+        tx_agg[key] = {"Qty": 0.0, "InvestedTotal": 0.0, "InvestedTotalUSD": 0.0}
+    qty     = float(tx.get("Qty", 0))
+    buy_avg = float(tx.get("BuyAvg", 0))
+    buy_usd = float(tx.get("BuyValueUSD", 0) or 0)
+    tx_agg[key]["Qty"]              += qty
+    tx_agg[key]["InvestedTotal"]    += qty * buy_avg
+    tx_agg[key]["InvestedTotalUSD"] += buy_usd
 
 
 def live_price(stock_info):
-    """Returns the live price for a stock/MF."""
-    sym      = stock_info.get("Symbol", "")
-    name     = stock_info.get("Name", "")
-    is_eq    = stock_info.get("Equity", True)
-    is_lst   = stock_info.get("Listed", True)
+    """
+    Returns (display_price, pe_ratio).
+    display_price is already converted to the active currency (INR or USD).
+    """
+    sym     = stock_info.get("Symbol", "")
+    is_eq   = stock_info.get("Equity", True)
+    is_lst  = stock_info.get("Listed", True)
+    country = (stock_info.get("Country") or "INDIA").upper()
+
     if not is_lst:
-        return float(stock_info.get("LTP") or 0.0), None
+        native = float(stock_info.get("LTP") or 0.0)
+        return convert_price(native, country), None
+
     if is_eq:
-        return get_stock_info(sym)
-    return get_nav(nav_df, sym), None
+        native, pe = get_stock_info(sym)
+    else:
+        native, pe = get_nav(nav_df, sym), None
+
+    return convert_price(native, country), pe
 
 
 def build_portfolio_df(port_name):
     """Build a summary DataFrame for a single portfolio."""
-    # Sector allocation % lookup for this portfolio
+    use_usd = st.session_state.get("view_in_usd", False)
+
     sector_alloc_pct = {
         a["Sector"]: float(a.get("Allocation", 0) or 0)
         for a in db_sector_allocs
         if a.get("Portfolio") == port_name and a.get("Sector")
     }
 
-    # Stocks tagged to this portfolio with allocation > 0
     alloc_map = {
         a["Symbol"]: a["Allocation"]
         for a in db_stock_allocs
@@ -223,43 +370,45 @@ def build_portfolio_df(port_name):
 
     rows = []
     for sym, target_alloc in alloc_map.items():
-        stock_info   = stocks_map.get(sym, {})
-        sector       = stock_info.get("Sector", "Unknown")
-        name         = stock_info.get("Name", sym)
-        agg          = tx_agg.get((port_name, sym), {"Qty": 0.0, "InvestedTotal": 0.0})
-        qty          = agg["Qty"]
-        invested     = agg["InvestedTotal"]
-        price, pe    = live_price(stock_info)
-        curr_val     = qty * price
-        s_alloc_pct  = sector_alloc_pct.get(sector, 0.0)
+        stock_info  = stocks_map.get(sym, {})
+        sector      = stock_info.get("Sector", "Unknown")
+        name        = stock_info.get("Name", sym)
+        country     = (stock_info.get("Country") or "INDIA").upper()
+        agg         = tx_agg.get((port_name, sym), {"Qty": 0.0, "InvestedTotal": 0.0, "InvestedTotalUSD": 0.0})
+        qty         = agg["Qty"]
+        invested    = agg["InvestedTotalUSD"] if use_usd else agg["InvestedTotal"]
+        price, pe   = live_price(stock_info)    # already in display currency
+        curr_val    = qty * price
+        s_alloc_pct = sector_alloc_pct.get(sector, 0.0)
         rows.append({
-            "Sector":           sector,
-            "Symbol":           sym,
-            "Name":             name,
-            "Portfolio":        port_name,
-            "Target Alloc %":   float(target_alloc),
-            "Sector Alloc %":   s_alloc_pct,
-            "Qty":              qty,
-            "Invested":         invested,
-            "Live Price":       price,
-            "PE Ratio":         pe,
-            "Current Value":    curr_val,
+            "Sector":         sector,
+            "Symbol":         sym,
+            "Name":           name,
+            "Country":        country,
+            "Portfolio":      port_name,
+            "Target Alloc %": float(target_alloc),
+            "Sector Alloc %": s_alloc_pct,
+            "Qty":            qty,
+            "Invested":       invested,
+            "Live Price":     price,
+            "PE Ratio":       pe,
+            "Current Value":  curr_val,
+            "Running P&L":    curr_val - invested,
+            "Running P&L %":  ((curr_val - invested) / invested * 100) if invested else 0.0,
         })
 
     if not rows:
-        return pd.DataFrame(columns=["Sector","Symbol","Name","Target Alloc %","Sector Alloc %",
-                                     "Qty","Invested","Live Price", "PE Ratio", "Current Value"])
-    return pd.DataFrame(rows).sort_values(["Sector","Symbol"]).reset_index(drop=True)
+        return pd.DataFrame(columns=["Sector", "Symbol", "Name", "Country", "Portfolio",
+                                     "Target Alloc %", "Sector Alloc %",
+                                     "Qty", "Invested", "Live Price", "PE Ratio", "Current Value", "Running P&L", "Running P&L %"])
+    return pd.DataFrame(rows).sort_values(["Sector", "Symbol"]).reset_index(drop=True)
 
 
 def build_investment_bar_df(port_names_filter=None):
-    """Build Portfolio vs Invested vs Expected DataFrame for bar chart.
-    If port_names_filter is None, include all portfolios.
-    """
+    """Build Portfolio vs Invested vs Expected DataFrame for bar chart (always INR)."""
     ports = port_names_filter if port_names_filter else portfolio_names
     rows = []
     for port in ports:
-        # Current invested = sum of Qty * BuyAvg for all open txns in this portfolio
         curr = sum(
             tx_agg.get((port, a["Symbol"]), {"InvestedTotal": 0.0})["InvestedTotal"]
             for a in db_stock_allocs
@@ -276,7 +425,7 @@ def build_investment_bar_df(port_names_filter=None):
 
 
 def render_investment_bar(bar_df):
-    """Render a grouped bar chart of Current Invested vs Expected Investment."""
+    """Render a grouped bar chart of Current Invested vs Expected Investment (always INR)."""
     if bar_df.empty:
         return
     st.subheader("Current Invested vs Expected Investment")
@@ -314,9 +463,10 @@ def render_investment_bar(bar_df):
 
 
 def sector_invested_df(port_name=None):
-    """Return a DataFrame of Sector vs Invested for pie chart.
-    If port_name is None, aggregate across ALL portfolios.
-    """
+    """Return a DataFrame of Sector vs Invested for pie chart."""
+    use_usd      = st.session_state.get("view_in_usd", False)
+    invested_key = "InvestedTotalUSD" if use_usd else "InvestedTotal"
+
     data = {}
     ports = [port_name] if port_name else portfolio_names
     for port in ports:
@@ -330,8 +480,8 @@ def sector_invested_df(port_name=None):
         for sym in alloc_syms:
             stock_info = stocks_map.get(sym, {})
             sector     = stock_info.get("Sector", "Unknown")
-            agg        = tx_agg.get((port, sym), {"InvestedTotal": 0.0})
-            invested   = agg["InvestedTotal"]
+            agg        = tx_agg.get((port, sym), {"InvestedTotal": 0.0, "InvestedTotalUSD": 0.0})
+            invested   = agg[invested_key]
             data[sector] = data.get(sector, 0.0) + invested
 
     df = pd.DataFrame(list(data.items()), columns=["Sector", "Invested"])
@@ -341,50 +491,93 @@ def sector_invested_df(port_name=None):
 def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expected=0.0,
                            total_expected=0.0, port_expected_map=None):
     """Render metrics + bar + pie + stock bar + table for a given portfolio df."""
+    use_usd         = st.session_state.get("view_in_usd", False)
+    currency_symbol = "$" if use_usd else "₹"
+    money_fmt       = f"{currency_symbol} %.2f"
+
     # Ensure PE Ratio exists to handle stale session data
     if "PE Ratio" not in df.columns:
         df["PE Ratio"] = None
 
-    total_invested    = df["Invested"].sum()
-    total_curr_val    = df["Current Value"].sum()
-    gain_loss         = total_curr_val - total_invested
-    gain_loss_pct     = (gain_loss / total_invested * 100) if total_invested > 0 else 0.0
+    total_invested = df["Invested"].sum()
+    total_curr_val = df["Current Value"].sum()
+    gain_loss      = total_curr_val - total_invested
+    gain_loss_pct  = (gain_loss / total_invested * 100) if total_invested > 0 else 0.0
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("💰 Total Invested",       f"₹{total_invested:,.2f}")
-    m2.metric("🎯 Expected Investment",  f"₹{metric_expected:,.2f}")
-    m3.metric("📈 Current Value",        f"₹{total_curr_val:,.2f}")
-    m4.metric("📊 Gain / Loss",          f"₹{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
+    m1.metric("💰 Total Invested",      f"{currency_symbol}{total_invested:,.2f}")
+    exp_display = (metric_expected / _usdinr()) if use_usd else metric_expected
+    m2.metric("🎯 Expected Investment", f"{currency_symbol}{exp_display:,.2f}")
+    m3.metric("📈 Current Value",       f"{currency_symbol}{total_curr_val:,.2f}")
+    m4.metric("📊 Gain / Loss",         f"{currency_symbol}{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
 
     # ---- PE Ratio Metrics ----
-    # Calculate Average PE Ratio (Exclude DEBT and ETF/INDEX FUND)
     pe_filtered = df[
-        (df["PE Ratio"].notnull()) & 
+        (df["PE Ratio"].notnull()) &
         (~df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
     ]
     avg_pe = pe_filtered["PE Ratio"].mean() if not pe_filtered.empty else 0.0
 
     st.markdown("### 📊 Valuation & Index Comparison")
-    
-    # Fetch Index PEs
+
     niphy_pe = get_index_pe("NIFTY 50")
-    bank_pe = get_index_pe("NIFTY BANK")
+    bank_pe  = get_index_pe("NIFTY BANK")
 
     col_pe1, col_pe2 = st.columns([1, 2])
     with col_pe1:
         st.metric("🎯 Portfolio Avg PE", f"{avg_pe:.2f}")
-    
     with col_pe2:
         index_data = {
-            "Index": ["NIFTY 50", "NIFTY BANK"],
-            "Current PE": [f"{niphy_pe:.2f}" if niphy_pe > 0 else "N/A", 
-                           f"{bank_pe:.2f}" if bank_pe > 0 else "N/A"]
+            "Index":      ["NIFTY 50", "NIFTY BANK"],
+            "Current PE": [
+                f"{niphy_pe:.2f}" if niphy_pe > 0 else "N/A",
+                f"{bank_pe:.2f}"  if bank_pe  > 0 else "N/A",
+            ]
         }
         st.table(pd.DataFrame(index_data))
 
+    # Show live FX rates being used
+    if use_usd:
+        usd_inr = _usdinr()
+        fx_display = [{"Currency Pair": "USD/INR", "Rate": f"₹{usd_inr:,.4f}"}]
+        for country, cp in currency_pairs_map.items():
+            if country == "INDIA":
+                continue
+            sym  = cp.get("Symbol", "")
+            rate = fx_rates.get(sym, 0.0)
+            base = cp.get("BaseCurrency", country)
+            if rate > 0:
+                fx_display.append({
+                    "Currency Pair": f"{base}/INR → {base}/USD",
+                    "Rate": f"₹{rate:,.4f} → ${rate / usd_inr:,.4f}"
+                })
+        if fx_display:
+            with st.expander("💱 FX Rates in use"):
+                st.table(pd.DataFrame(fx_display))
+    else:
+        # Show non-INR conversion rates used for non-Indian stocks
+        non_india = [
+            c for c in currency_pairs_map if c != "INDIA"
+            # only show if any stock in df belongs to this country
+            and "Country" in df.columns
+            and df["Country"].str.upper().eq(c).any()
+        ]
+        if non_india:
+            fx_display = []
+            for country in non_india:
+                cp   = currency_pairs_map[country]
+                sym  = cp.get("Symbol", "")
+                rate = fx_rates.get(sym, 0.0)
+                base = cp.get("BaseCurrency", country)
+                if rate > 0:
+                    fx_display.append({"Currency Pair": f"{base}/INR", "Rate": f"₹{rate:,.4f}"})
+            if fx_display:
+                with st.expander("💱 FX Rates in use"):
+                    st.table(pd.DataFrame(fx_display))
+
     st.divider()
 
-    # Bar chart — Current Invested vs Expected
+    # Bar chart — Current Invested vs Expected (always INR)
     if bar_df is not None and not bar_df.empty:
         render_investment_bar(bar_df)
         st.divider()
@@ -461,7 +654,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 )
                 st.plotly_chart(fig_d, use_container_width=True)
 
-                # Per-stock metrics (% only, no trend delta)
+                # Per-stock metrics
                 total = sector_stocks["Invested"].sum()
                 mcols = st.columns(len(sector_stocks))
                 for mc, row in zip(mcols, sector_stocks.itertuples()):
@@ -470,13 +663,15 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
 
                 # Summary table
                 st.dataframe(
-                    sector_stocks[["Name", "Target Alloc %", "Invested", "Current Value"]],
+                    sector_stocks[["Name", "Target Alloc %", "Invested", "Current Value", "Running P&L", "Running P&L %"]],
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "Target Alloc %": st.column_config.NumberColumn("Target %", format="%.2f%%"),
-                        "Invested":       st.column_config.NumberColumn("Invested", format="₹ %.2f"),
-                        "Current Value":  st.column_config.NumberColumn("Current Value", format="₹ %.2f"),
+                        "Target Alloc %": st.column_config.NumberColumn("Target %",      format="%.2f%%"),
+                        "Invested":       st.column_config.NumberColumn("Invested",       format=money_fmt),
+                        "Current Value":  st.column_config.NumberColumn("Current Value",  format=money_fmt),
+                        "Running P&L":    st.column_config.NumberColumn("Running P&L",     format=money_fmt),
+                        "Running P&L %":  st.column_config.NumberColumn("Running P&L %",   format="%.2f%%"),
                     }
                 )
     else:
@@ -492,31 +687,31 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Symbol":           None,
-                "Portfolio":        None,
-                "Target Alloc %":   None,
-                "Sector Alloc %":   None,
-                "Qty":              st.column_config.NumberColumn("Qty", format="%.4f"),
-                "Invested":         st.column_config.NumberColumn("Invested", format="₹ %.2f"),
-                "Live Price":       st.column_config.NumberColumn("Live Price", format="₹ %.2f"),
-                "PE Ratio":         st.column_config.NumberColumn("PE Ratio", format="%.2f"),
-                "Current Value":    st.column_config.NumberColumn("Current Value", format="₹ %.2f"),
+                "Symbol":         None,
+                "Portfolio":      None,
+                "Country":        None,
+                "Target Alloc %": None,
+                "Sector Alloc %": None,
+                "Qty":            st.column_config.NumberColumn("Qty",           format="%.4f"),
+                "Invested":       st.column_config.NumberColumn("Invested",       format=money_fmt),
+                "Live Price":     st.column_config.NumberColumn("Live Price",     format=money_fmt),
+                "PE Ratio":       st.column_config.NumberColumn("PE Ratio",       format="%.2f"),
+                "Current Value":  st.column_config.NumberColumn("Current Value",  format=money_fmt),
+                "Running P&L":    st.column_config.NumberColumn("Running P&L",     format=money_fmt),
+                "Running P&L %":  st.column_config.NumberColumn("Running P&L %",   format="%.2f%%"),
             }
         )
     else:
         st.info(f"No asset data available for {port_label}.")
 
     # ---- Stock-level bar chart ----
-    # Use port_expected_map for per-stock calculation (needed in Overall tab)
-    # Otherwise fall back to total_expected (single portfolio tabs)
     can_show_stock_bar = (port_expected_map is not None and "Portfolio" in df.columns) or total_expected > 0
     if not df.empty and can_show_stock_bar:
         st.divider()
         st.subheader("Stock: Current Invested vs Expected")
-        stock_bar = df[["Name", "Invested", "Sector Alloc %", "Target Alloc %"]].copy()
+        stock_bar = df[["Name", "Invested", "Sector Alloc %", "Target Alloc %", "Portfolio"]].copy()
 
         if port_expected_map is not None and "Portfolio" in df.columns:
-            # Per-stock expected using each stock's own portfolio expected
             stock_bar["Expected"] = df.apply(
                 lambda row: (
                     port_expected_map.get(row["Portfolio"], 0.0)
@@ -526,7 +721,6 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 axis=1
             )
         else:
-            # Single portfolio tab: use total_expected directly
             stock_bar["Expected"] = (
                 total_expected
                 * (stock_bar["Sector Alloc %"] / 100)
@@ -542,7 +736,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 x=stock_bar["Name"],
                 y=stock_bar["Invested"],
                 marker_color="#4C78A8",
-                text=stock_bar["Invested"].apply(lambda v: f"₹{v:,.0f}"),
+                text=stock_bar["Invested"].apply(lambda v: f"{currency_symbol}{v:,.0f}"),
                 textposition="outside"
             ))
             fig_s.add_trace(go.Bar(
@@ -555,7 +749,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
             ))
             fig_s.update_layout(
                 barmode="group",
-                yaxis_title="Amount (₹)",
+                yaxis_title=f"Amount ({currency_symbol})",
                 xaxis_title="Stock",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E2E8F0")),
                 margin=dict(t=60, b=80),
@@ -578,14 +772,13 @@ if not portfolio_names:
     st.stop()
 
 # ---- Pre-load all portfolio DataFrames (cached in session_state) ----
-# Live price calls are expensive; only fetch once per session (or after Refresh).
 for _p in portfolio_names:
     _key = f"port_df_{_p}"
     if _key not in st.session_state:
         with st.spinner(f"Fetching prices for {_p}..."):
             st.session_state[_key] = build_portfolio_df(_p)
 
-all_dfs    = [st.session_state[f"port_df_{p}"] for p in portfolio_names]
+all_dfs     = [st.session_state[f"port_df_{p}"] for p in portfolio_names]
 combined_df = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
 
 overall_bar_df   = build_investment_bar_df()
@@ -613,9 +806,9 @@ with tabs[0]:
 # ---- Per-Portfolio Tabs ----
 for i, port_name in enumerate(portfolio_names):
     with tabs[i + 1]:
-        port_df      = st.session_state[f"port_df_{port_name}"]
-        port_sec_df  = sector_invested_df(port_name=port_name)
-        port_bar_df  = build_investment_bar_df(port_names_filter=[port_name])
+        port_df       = st.session_state[f"port_df_{port_name}"]
+        port_sec_df   = sector_invested_df(port_name=port_name)
+        port_bar_df   = build_investment_bar_df(port_names_filter=[port_name])
         port_expected = float(port_bar_df["Expected Investment"].iloc[0]) if not port_bar_df.empty else 0.0
 
         if port_df.empty or port_df["Invested"].sum() == 0:
