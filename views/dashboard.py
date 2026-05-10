@@ -320,12 +320,25 @@ for tx in open_tx:
     key = (port, sym)
     if key not in tx_agg:
         tx_agg[key] = {"Qty": 0.0, "InvestedTotal": 0.0, "InvestedTotalUSD": 0.0}
+
+    # Only count invested amount for open (unsold) transactions
+    sell_avg  = tx.get("SellAvg")
+    sell_date = tx.get("SellDate")
+    is_open   = (
+        (sell_avg  is None or sell_avg  == "" or (isinstance(sell_avg,  float) and pd.isna(sell_avg)))  and
+        (sell_date is None or sell_date == "" or (isinstance(sell_date, float) and pd.isna(sell_date)))
+    )
+
     qty     = float(tx.get("Qty", 0))
+    buy_val = float(tx.get("BuyValue", 0) or 0)    # INR total for this transaction
+    buy_usd = float(tx.get("BuyValueUSD", 0) or 0) # USD total for this transaction
     buy_avg = float(tx.get("BuyAvg", 0))
-    buy_usd = float(tx.get("BuyValueUSD", 0) or 0)
-    tx_agg[key]["Qty"]              += qty
-    tx_agg[key]["InvestedTotal"]    += qty * buy_avg
-    tx_agg[key]["InvestedTotalUSD"] += buy_usd
+
+    tx_agg[key]["Qty"] += qty
+    if is_open:
+        # Use BuyValue directly if available, else fall back to qty * BuyAvg
+        tx_agg[key]["InvestedTotal"]    += buy_val if buy_val > 0 else qty * buy_avg
+        tx_agg[key]["InvestedTotalUSD"] += buy_usd
 
 
 def live_price(stock_info):
