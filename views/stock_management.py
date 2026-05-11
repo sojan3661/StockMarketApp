@@ -83,6 +83,55 @@ def get_stock_price(symbol):
             
     return price
 
+
+def search_international_stock(query):
+    """Search Yahoo Finance for stocks matching a query string."""
+    import urllib.request
+    import urllib.parse
+    import json
+    import ssl
+    try:
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={encoded_query}&quotesCount=10&newsCount=0"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        context = ssl._create_unverified_context()
+        with urllib.request.urlopen(req, context=context, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            quotes = data.get("quotes", [])
+            results = []
+            for q in quotes:
+                symbol = q.get("symbol", "")
+                name = q.get("longname") or q.get("shortname") or symbol
+                exchange = q.get("exchDisp", "")
+                qtype = q.get("quoteType", "")
+                if symbol and qtype in ("EQUITY", "ETF", "MUTUALFUND"):
+                    results.append({"symbol": symbol, "name": name, "exchange": exchange, "type": qtype})
+            return results
+    except Exception:
+        return []
+
+
+@st.dialog("Search International Stock")
+def search_international_stock_dialog(form_key_prefix="add"):
+    search_q = st.text_input("Search by company name or ticker:", placeholder="e.g. Apple, AAPL, Samsung")
+    if search_q and len(search_q) >= 2:
+        with st.spinner("Searching..."):
+            results = search_international_stock(search_q)
+        if not results:
+            st.warning("No results found. Try a different search term.")
+        else:
+            st.write(f"Found {len(results)} result(s):")
+            for i, r in enumerate(results):
+                col_info, col_btn = st.columns([4, 1])
+                with col_info:
+                    st.markdown(f"**{r['name']}** `{r['symbol']}` — {r['exchange']} ({r['type']})")
+                with col_btn:
+                    if st.button("Select", key=f"intl_sel_{form_key_prefix}_{i}"):
+                        st.session_state[f"intl_selected_symbol_{form_key_prefix}"] = r["symbol"]
+                        st.session_state[f"intl_selected_name_{form_key_prefix}"] = r["name"]
+                        st.rerun()
+
+
 st.title("Asset Management")
 
 if not db.is_configured():
@@ -105,9 +154,12 @@ if not available_countries:
 nav_df = load_nav_data()
 
 # Pre-fill from session state if available
-# Pre-fill from session state if available
 if 'selected_mf' not in st.session_state:
     st.session_state.selected_mf = ""
+
+# Session state for international stock symbol selection (Add form)
+if 'intl_selected_symbol_add' not in st.session_state:
+    st.session_state.intl_selected_symbol_add = ""
 
 # ==================== Bulk Import ====================
 @st.cache_data
@@ -184,7 +236,6 @@ def search_stock_dialog():
                                 f_price = float(meta.get("regularMarketPrice", 0.0))
                                 if f_price > 0:
                                     price = f_price
-                                    # Try to fetch PE from yahoo finance chart or info API if needed
                                     break
                     except Exception:
                         continue
@@ -310,14 +361,30 @@ if asset_type == "Mutual Fund":
 else:
     listing_status = st.radio("Listing Status", options=["Listed", "Unlisted"], horizontal=True)
 
+# Country selector outside form to reactively show/hide the international search button
+country_choice_pre = st.selectbox("Country", options=available_countries, key="add_country_pre")
+is_non_india = country_choice_pre.upper() != "INDIA"
+
+# Show international stock search button outside form when non-India country is selected
+if is_non_india and asset_type == "Stock":
+    col_mcap_label, col_intl_btn = st.columns([3, 1])
+    with col_mcap_label:
+        st.caption("💡 Use the button to search and auto-fill the stock symbol for this country.")
+    with col_intl_btn:
+        if st.button("🔍 Search Stock", key="intl_search_add_btn", use_container_width=True):
+            search_international_stock_dialog(form_key_prefix="add")
+
 # Using st.form prevents the page from reloading when typing or selecting dropdowns inside it
 with st.form("add_asset_form", clear_on_submit=False):
     col1, col2 = st.columns(2)
 
     with col1:
         if asset_type == "Stock":
-            stock_name = st.text_input("Name", placeholder="e.g., Reliance Industries")
-            stock_symbol = st.text_input("Symbol", placeholder="e.g., RELIANCE")
+            prefill_name = st.session_state.get("intl_selected_name_add", "")
+            prefill_symbol = st.session_state.get("intl_selected_symbol_add", "")
+            stock_name = st.text_input("Name", value=prefill_name, placeholder="e.g., Reliance Industries")
+            # Pre-fill symbol from international search if available
+            stock_symbol = st.text_input("Symbol", value=prefill_symbol, placeholder="e.g., RELIANCE")
             market_cap_options = ["Large Cap", "Mid Cap", "Small Cap", "ETF", "NA"]
             market_cap = st.selectbox("Market Cap", options=market_cap_options)
         else:
@@ -337,7 +404,6 @@ with st.form("add_asset_form", clear_on_submit=False):
 
     with col2:
         sector_choice = st.selectbox("Sector", options=existing_sectors if existing_sectors else ["NA"])
-        country_choice = st.selectbox("Country", options=available_countries)
 
     # Submission
     submitted = st.form_submit_button("Preview & Add Asset", type="primary")
@@ -380,12 +446,15 @@ if submitted:
 
         # 2. Insert to DB
         if price_preview_success:
-            success = db.add_stock(stock_symbol, stock_name, is_equity, sector_choice, is_listed, market_cap, stock_ltp, country_choice)
+            success = db.add_stock(stock_symbol, stock_name, is_equity, sector_choice, is_listed, market_cap, stock_ltp, country_choice_pre)
             if success:
                 st.success(f"Successfully added: {stock_name} ({stock_symbol})")
                 if asset_type == "Mutual Fund":
-                    st.session_state.selected_mf = "" 
-                st.session_state.asset_added = True # trigger to clear or show state
+                    st.session_state.selected_mf = ""
+                # Clear international symbol selection after successful add
+                st.session_state.intl_selected_symbol_add = ""
+                st.session_state.intl_selected_name_add = ""
+                st.session_state.asset_added = True
                 st.rerun()
 
 st.divider()
@@ -428,21 +497,47 @@ else:
             tab_edit, tab_delete = st.tabs(["✏️ Edit", "🗑️ Delete"])
 
             with tab_edit:
+                # Session state key for this stock's international symbol selection
+                intl_edit_key = f"intl_selected_symbol_edit_{sym}"
+                intl_edit_name_key = f"intl_selected_name_edit_{sym}"
+                if intl_edit_key not in st.session_state:
+                    st.session_state[intl_edit_key] = ""
+                if intl_edit_name_key not in st.session_state:
+                    st.session_state[intl_edit_name_key] = ""
+
+                # Country selector outside the form to reactively show international search button
+                edit_country_pre = st.selectbox(
+                    "Country",
+                    options=available_countries,
+                    index=available_countries.index(current_country) if current_country in available_countries else 0,
+                    key=f"edit_country_pre_{sym}"
+                )
+                edit_is_non_india = edit_country_pre.upper() != "INDIA"
+
+                # Show international stock search button when non-India country selected
+                if edit_is_non_india and is_eq:
+                    col_hint, col_intl_edit_btn = st.columns([3, 1])
+                    with col_hint:
+                        st.caption("💡 Search to auto-fill symbol for this country.")
+                    with col_intl_edit_btn:
+                        if st.button("🔍 Search Stock", key=f"intl_search_edit_btn_{sym}", use_container_width=True):
+                            search_international_stock_dialog(form_key_prefix=f"edit_{sym}")
+
                 with st.form(f"edit_form_{sym}"):
                     ec1, ec2 = st.columns(2)
                     with ec1:
-                        new_sym_input = st.text_input("Symbol", value=sym)
-                        new_name = st.text_input("Name", value=name)
+                        new_sym_input = st.text_input(
+                            "Symbol",
+                            value=st.session_state.get(intl_edit_key) or sym
+                        )
+                        new_name = st.text_input(
+                            "Name",
+                            value=st.session_state.get(intl_edit_name_key) or name
+                        )
                         new_mcap = st.selectbox(
                             "Market Cap",
                             options=market_cap_options,
                             index=market_cap_options.index(mcap) if mcap in market_cap_options else len(market_cap_options) - 1
-                        )
-                        new_country = st.selectbox(
-                            "Country",
-                            options=available_countries,
-                            index=available_countries.index(current_country) if current_country in available_countries else 0,
-                            key=f"country_{sym}"
                         )
                     with ec2:
                         new_sector = st.selectbox(
@@ -450,7 +545,7 @@ else:
                             options=existing_sectors,
                             index=existing_sectors.index(sec) if sec in existing_sectors else 0
                         )
-                        if not is_lst or is_eq: # Simple check to always show or only if unlisted
+                        if not is_lst or is_eq:
                              new_ltp = st.number_input("Last Traded Price (LTP)", value=float(ltp or 0.0), min_value=0.0, step=0.1, key=f"ltp_edit_{sym}")
                         else:
                              new_ltp = None
@@ -486,18 +581,22 @@ else:
                                     is_listed=new_is_lst,
                                     market_cap=new_mcap,
                                     ltp=new_ltp,
-                                    country=new_country
+                                    country=edit_country_pre
                                 )
                             if success:
                                 st.success(msg)
+                                st.session_state[intl_edit_key] = ""
+                                st.session_state[intl_edit_name_key] = ""
                                 st.rerun()
                             else:
                                 st.error(msg)
                         else:
                             # Standard Update
-                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap, new_ltp, new_country)
+                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap, new_ltp, edit_country_pre)
                             if ok:
                                 st.success(f"Updated '{sym}' successfully!")
+                                st.session_state[intl_edit_key] = ""
+                                st.session_state[intl_edit_name_key] = ""
                                 st.rerun()
 
             with tab_delete:
@@ -507,4 +606,3 @@ else:
                     if ok:
                         st.success(f"Deleted '{sym}'.")
                         st.rerun()
-
