@@ -9,10 +9,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
 
 try:
-    from nsepython import nse_eq, index_pe_pb_div
+    import yfinance as yf
 except ImportError:
-    nse_eq = None
-    index_pe_pb_div = None
+    yf = None
 
 from datetime import datetime, timedelta
 
@@ -98,43 +97,19 @@ def get_stock_info(symbol):
     price = None
     pe = None
 
-    if nse_eq:
-        try:
-            quote = nse_eq(symbol)
-            if quote and 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
-                price = float(quote["priceInfo"]["lastPrice"])
-
-            if quote and 'metadata' in quote:
-                md = quote['metadata']
-                pe_raw = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe')
-                if pe_raw is not None:
-                    pe = float(pe_raw)
-            if price and price > 0:
-                return price, pe
-        except Exception:
-            pass
-
-    # Yahoo Finance fallback
-    import urllib.request
-    import urllib.parse
-    import json
-    import ssl
-
-    for suffix in [".NS", ".BO", ""]:
-        try:
-            encoded_sym = urllib.parse.quote(symbol)
-            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            context = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, context=context, timeout=5) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                if data.get("chart", {}).get("result"):
-                    meta = data["chart"]["result"][0]["meta"]
-                    fallback_price = float(meta.get("regularMarketPrice", 0.0))
-                    if fallback_price and fallback_price > 0:
-                        return fallback_price, pe
-        except Exception:
-            continue
+    if yf:
+        for suffix in [".NS", ".BO", ""]:
+            try:
+                ticker = yf.Ticker(symbol + suffix)
+                p = ticker.fast_info.last_price
+                if p and p > 0:
+                    price = float(p)
+                    pe_raw = ticker.info.get("trailingPE")
+                    if pe_raw is not None:
+                        pe = float(pe_raw)
+                    return price, pe
+            except Exception:
+                continue
 
     return price or 0.0, pe
 
@@ -172,17 +147,15 @@ def fetch_fx_rate(pair_symbol):
 
 @st.cache_data(ttl=86400)
 def get_index_pe(index_name):
-    """Fetches the latest PE for an index using nsepython."""
-    if not index_pe_pb_div:
+    """Fetches the latest PE for an index using yfinance."""
+    if not yf:
         return 0.0
     try:
-        end   = datetime.now().strftime('%d-%b-%Y')
-        start = (datetime.now() - timedelta(days=10)).strftime('%d-%b-%Y')
-        df = index_pe_pb_div(index_name, start, end)
-        if df is not None and not df.empty:
-            latest_pe = df.iloc[0].get('pe') or df.iloc[0].get('PE')
-            if latest_pe is not None:
-                return float(latest_pe)
+        symbol = "^NSEI" if index_name == "NIFTY 50" else "^NSEBANK"
+        ticker = yf.Ticker(symbol)
+        pe = ticker.info.get("trailingPE")
+        if pe is not None:
+            return float(pe)
     except Exception:
         pass
     return 0.0

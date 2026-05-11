@@ -9,11 +9,10 @@ import openpyxl
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
 
-# Optionally import nsepython
 try:
-    from nsepython import nse_eq
+    import yfinance as yf
 except ImportError:
-    nse_eq = None
+    yf = None
 
 # Cache the mutual fund data from AMFI
 @st.cache_data(ttl=18000)  # cache the dataframe for 5 hours
@@ -49,37 +48,16 @@ def get_nav(nav_df, fund_name):
 
 def get_stock_price(symbol):
     price = None
-    if nse_eq:
-        try:
-            quote = nse_eq(symbol)
-            if quote and 'priceInfo' in quote and 'lastPrice' in quote['priceInfo']:
-                price = float(quote['priceInfo']['lastPrice'])
-            if price and price > 0:
-                return price
-        except Exception:
-            pass
-            
-    # Yahoo Finance Fallback
-    import urllib.request
-    import urllib.parse
-    import json
-    import ssl
-    
-    for suffix in [".NS", ".BO", ""]:
-        try:
-            encoded_sym = urllib.parse.quote(symbol)
-            url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            context = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, context=context, timeout=5) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                if data.get("chart", {}).get("result"):
-                    meta = data["chart"]["result"][0]["meta"]
-                    fallback_price = float(meta.get("regularMarketPrice", 0.0))
-                    if fallback_price > 0:
-                        return fallback_price
-        except Exception:
-            continue
+    if yf:
+        for suffix in [".NS", ".BO", ""]:
+            try:
+                ticker = yf.Ticker(symbol + suffix)
+                p = ticker.fast_info.last_price
+                if p and p > 0:
+                    price = float(p)
+                    return price
+            except Exception:
+                continue
             
     return price
 
@@ -207,36 +185,17 @@ def search_stock_dialog():
         with st.spinner("Fetching data..."):
             price, pe, company = None, "N/A", search_sym
             
-            # 1. Try NSE
-            if nse_eq:
-                try:
-                    quote = nse_eq(search_sym)
-                    if quote and 'priceInfo' in quote:
-                        price = quote['priceInfo'].get('lastPrice')
-                        company = quote.get('info', {}).get('companyName', search_sym)
-                        if 'metadata' in quote:
-                            md = quote['metadata']
-                            pe = md.get('pdSymbolPe') or md.get('pdSectorPe') or md.get('pe', 'N/A')
-                except Exception:
-                    pass
-                    
-            # 2. Try YF Fallback if NSE failed
-            if not price:
-                import urllib.request, urllib.parse, json, ssl
+            if yf:
                 for suffix in [".NS", ".BO", ""]:
                     try:
-                        encoded_sym = urllib.parse.quote(search_sym)
-                        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{encoded_sym}{suffix}?interval=1d&range=1d"
-                        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                        context = ssl._create_unverified_context()
-                        with urllib.request.urlopen(req, context=context, timeout=5) as response:
-                            data = json.loads(response.read().decode('utf-8'))
-                            if data.get("chart", {}).get("result"):
-                                meta = data["chart"]["result"][0]["meta"]
-                                f_price = float(meta.get("regularMarketPrice", 0.0))
-                                if f_price > 0:
-                                    price = f_price
-                                    break
+                        ticker = yf.Ticker(search_sym + suffix)
+                        p = ticker.fast_info.last_price
+                        if p:
+                            price = float(p)
+                            info = ticker.info
+                            company = info.get("longName") or info.get("shortName") or search_sym
+                            pe = info.get("trailingPE", "N/A")
+                            break
                     except Exception:
                         continue
                         
