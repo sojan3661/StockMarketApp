@@ -221,10 +221,10 @@ stock_country_map = {
 tx_df = pd.DataFrame(open_transactions)
 
 if not tx_df.empty:
-    tx_df["InvestedTotal"] = tx_df["Qty"] * tx_df["BuyAvg"]
     tx_agg = (
         tx_df.groupby("Symbol")
-        .agg({"Qty": "sum", "InvestedTotal": "sum"})
+        .agg({"Qty": "sum", "BuyValue": "sum"})
+        .rename(columns={"BuyValue": "InvestedTotal"})
         .to_dict("index")
     )
 else:
