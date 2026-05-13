@@ -274,10 +274,10 @@ for i, port_name in enumerate(portfolio_names):
         monthly_sip     = plan_details.get("Monthly SIP") or 0
         months          = plan_details.get("Number of Months") or 0
 
-        # Current invested = sum of Qty * BuyAvg for open transactions in this portfolio
+        # Current invested = sum of BuyValue for open transactions in this portfolio
         port_open_tx = [tx for tx in open_transactions if tx.get("Portfolio") == port_name]
         current_invested = sum(
-            float(tx.get("Qty", 0)) * float(tx.get("BuyAvg", 0))
+            float(tx.get("BuyValue", 0))
             for tx in port_open_tx
         )
 
