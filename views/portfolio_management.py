@@ -221,8 +221,10 @@ stock_country_map = {
 tx_df = pd.DataFrame(open_transactions)
 
 if not tx_df.empty:
+    if "Portfolio" not in tx_df.columns:
+        tx_df["Portfolio"] = ""
     tx_agg = (
-        tx_df.groupby("Symbol")
+        tx_df.groupby(["Portfolio", "Symbol"])
         .agg({"Qty": "sum", "BuyValue": "sum"})
         .rename(columns={"BuyValue": "InvestedTotal"})
         .to_dict("index")
@@ -350,7 +352,7 @@ for i, port_name in enumerate(portfolio_names):
 
                         alloc = float(port_stock_allocations.get(sym, 0.0))
 
-                        agg      = tx_agg.get(sym, {"Qty": 0, "InvestedTotal": 0})
+                        agg      = tx_agg.get((port_name, sym), {"Qty": 0, "InvestedTotal": 0})
                         qty      = agg["Qty"]
                         invested = agg["InvestedTotal"]
 
