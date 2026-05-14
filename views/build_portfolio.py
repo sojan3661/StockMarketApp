@@ -33,7 +33,7 @@ if plans:
     plans_df = pd.DataFrame(plans)
 else:
     plans_df = pd.DataFrame(columns=[
-        "Portfolio", "Current Invested Amount", "Monthly SIP", "Number of Months", "Description"
+        "Portfolio", "Current Invested Amount", "Monthly SIP", "Number of Months", "Description", "Platform"
     ])
 
 
@@ -57,6 +57,7 @@ with st.form("add_new_plan_form", clear_on_submit=True):
     with col2:
         new_months = st.number_input("Number of Months", min_value=0, step=1, value=0)
         new_desc = st.text_input("Description", placeholder="Optional notes about this portfolio")
+        new_platform = st.text_input("Platform", placeholder="Optional platform name")
         
     add_submitted = st.form_submit_button("Create New Plan", type="primary")
     
@@ -71,7 +72,8 @@ with st.form("add_new_plan_form", clear_on_submit=True):
                 current_invested=new_invested,
                 monthly_sip=new_sip if new_sip > 0 else None,
                 num_months=new_months if new_months > 0 else None,
-                description=new_desc.strip() if new_desc else None
+                description=new_desc.strip() if new_desc else None,
+                platform=new_platform.strip() if new_platform else None
             )
             if success:
                 st.success(f"Created {new_portfolio} successfully!")
@@ -100,6 +102,9 @@ else:
         months = int(row.get('Number of Months') or 0)
         expected_investment = inv_amt + (sip_amt * months)
         
+        platform = row.get("Platform")
+        platform_html = f'<span style="background-color: #F59E0B20; color: #FBBF24; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Platform: {platform}</span>' if pd.notna(platform) and platform else ""
+        
         # UI Expanders for each plan to keep layout clean
         with st.expander(f"{port_id}", expanded=False):
             st.markdown(
@@ -107,6 +112,7 @@ else:
                 <div style="display: flex; gap: 15px; margin-bottom: 15px; color: #9CA3AF;">
                     <span style="background-color: #3B82F620; color: #60A5FA; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Invested: ₹{inv_amt:,.2f}</span>
                     <span style="background-color: #10B98120; color: #34D399; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Expected: ₹{expected_investment:,.2f}</span>
+                    {platform_html}
                 </div>
                 """, unsafe_allow_html=True
             )
@@ -144,8 +150,13 @@ else:
                         )
                         edit_desc = st.text_input(
                             "Description",
-                            value=str(row.get("Description") or ""),
+                            value=str(row.get("Description") or "") if pd.notna(row.get("Description")) else "",
                             key=f"edit_desc_{index}"
+                        )
+                        edit_platform = st.text_input(
+                            "Platform",
+                            value=str(row.get("Platform") or "") if pd.notna(row.get("Platform")) else "",
+                            key=f"edit_plat_{index}"
                         )
                     
                     edit_submitted = st.form_submit_button("Update Plan")
@@ -158,7 +169,8 @@ else:
                             current_invested=edit_invested,
                             monthly_sip=edit_sip if edit_sip > 0 else None,
                             num_months=edit_months if edit_months > 0 else None,
-                            description=edit_desc if edit_desc else None
+                            description=edit_desc if edit_desc else None,
+                            platform=edit_platform if edit_platform else None
                         )
                         if success:
                             st.success(f"Updated {port_id} successfully!")

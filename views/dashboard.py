@@ -797,6 +797,11 @@ for i, port_name in enumerate(portfolio_names):
         port_bar_df   = build_investment_bar_df(port_names_filter=[port_name])
         port_expected = float(port_bar_df["Expected Investment"].iloc[0]) if not port_bar_df.empty else 0.0
 
+        plan = next((p for p in plans_list if p.get("Portfolio") == port_name), {})
+        platform = plan.get("Platform")
+        if pd.notna(platform) and platform:
+            st.markdown(f"**Platform:** {platform}")
+
         if port_df.empty or port_df["Invested"].sum() == 0:
             st.info(f"No invested data found for **{port_name}**.")
         else:
