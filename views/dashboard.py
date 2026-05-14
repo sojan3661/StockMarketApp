@@ -292,7 +292,7 @@ for tx in open_tx:
         continue
     key = (port, sym)
     if key not in tx_agg:
-        tx_agg[key] = {"Qty": 0.0, "InvestedTotal": 0.0, "InvestedTotalUSD": 0.0}
+        tx_agg[key] = {"Qty": 0.0, "InvestedTotal": 0.0, "InvestedTotalUSD": 0.0, "BuyValueTotal": 0.0}
 
     # Only count invested amount for open (unsold) transactions
     sell_avg  = tx.get("SellAvg")
@@ -312,6 +312,7 @@ for tx in open_tx:
         # Use BuyValue directly if available, else fall back to qty * BuyAvg
         tx_agg[key]["InvestedTotal"]    += buy_val if buy_val > 0 else qty * buy_avg
         tx_agg[key]["InvestedTotalUSD"] += buy_usd
+        tx_agg[key]["BuyValueTotal"]    += buy_val
 
 
 def live_price(stock_info):
@@ -396,10 +397,9 @@ def build_investment_bar_df(port_names_filter=None):
     rows = []
     for port in ports:
         curr = sum(
-            tx_agg.get((port, a["Symbol"]), {"InvestedTotal": 0.0})["InvestedTotal"]
-            for a in db_stock_allocs
-            if a.get("Portfolio") == port and a.get("Symbol")
-            and (a.get("Allocation") or 0) > 0
+            float(tx.get("BuyValue", 0) or 0)
+            for tx in open_tx
+            if tx.get("Portfolio") == port
         )
         plan = next((p for p in plans_list if p.get("Portfolio") == port), {})
         expected = (
