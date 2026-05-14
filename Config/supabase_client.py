@@ -910,7 +910,7 @@ class SupabaseClient:
             st.error(f"Error fetching investment plans: {e}")
             return []
 
-    def upsert_investment_plan(self, portfolio, current_invested, monthly_sip, num_months, description):
+    def upsert_investment_plan(self, portfolio, current_invested, monthly_sip, num_months, description, platform=None):
         """Upserts an investment plan. Primary key is Portfolio."""
         headers = self._get_headers()
         if not headers:
@@ -924,7 +924,8 @@ class SupabaseClient:
             "Current Invested Amount": current_invested,
             "Monthly SIP": monthly_sip,
             "Number of Months": num_months,
-            "Description": description
+            "Description": description,
+            "Platform": platform
         }
         
         try:
