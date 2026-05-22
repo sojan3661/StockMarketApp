@@ -122,7 +122,12 @@ else:
             # --- EDIT TAB ---
             with tab_edit:
                 with st.form(f"edit_plan_form_{index}"):
-                    st.write(f"**Edit details for {port_id}**")
+                    edit_portfolio_name = st.text_input(
+                        "Portfolio Name*",
+                        value=port_id,
+                        key=f"edit_name_{index}",
+                        help="Change the name of this portfolio. This will update it in all transactions and allocations."
+                    )
                     
                     ec1, ec2 = st.columns(2)
                     with ec1:
@@ -162,21 +167,41 @@ else:
                     edit_submitted = st.form_submit_button("Update Plan")
                     
                     if edit_submitted:
-                        # PK 'Portfolio' cannot be changed in this schema via standard upsert,
-                        # so we update the other columns using the existing port_id.
-                        success = db.upsert_investment_plan(
-                            portfolio=port_id,
-                            current_invested=edit_invested,
-                            monthly_sip=edit_sip if edit_sip > 0 else None,
-                            num_months=edit_months if edit_months > 0 else None,
-                            description=edit_desc if edit_desc else None,
-                            platform=edit_platform if edit_platform else None
-                        )
-                        if success:
-                            st.success(f"Updated {port_id} successfully!")
-                            refresh_data()
+                        new_name_clean = edit_portfolio_name.strip()
+                        if not new_name_clean:
+                            st.error("Portfolio Name is required.")
+                        elif new_name_clean.lower() != port_id.lower() and not plans_df.empty and (new_name_clean.lower() in plans_df["Portfolio"].str.lower().values):
+                            st.error(f"A portfolio named '{new_name_clean}' already exists. Please choose a different name.")
                         else:
-                            st.error(f"Failed to update {port_id}.")
+                            if new_name_clean != port_id:
+                                success, msg = db.update_portfolio_name(
+                                    old_name=port_id,
+                                    new_name=new_name_clean,
+                                    current_invested=edit_invested,
+                                    monthly_sip=edit_sip if edit_sip > 0 else None,
+                                    num_months=edit_months if edit_months > 0 else None,
+                                    description=edit_desc if edit_desc else None,
+                                    platform=edit_platform if edit_platform else None
+                                )
+                                if success:
+                                    st.success(msg)
+                                    refresh_data()
+                                else:
+                                    st.error(msg)
+                            else:
+                                success = db.upsert_investment_plan(
+                                    portfolio=port_id,
+                                    current_invested=edit_invested,
+                                    monthly_sip=edit_sip if edit_sip > 0 else None,
+                                    num_months=edit_months if edit_months > 0 else None,
+                                    description=edit_desc if edit_desc else None,
+                                    platform=edit_platform if edit_platform else None
+                                )
+                                if success:
+                                    st.success(f"Updated {port_id} successfully!")
+                                    refresh_data()
+                                else:
+                                    st.error(f"Failed to update {port_id}.")
             
             # --- DELETE TAB ---
             with tab_delete:
