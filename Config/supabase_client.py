@@ -942,6 +942,61 @@ class SupabaseClient:
             st.error(f"Error saving investment plan: {e}")
             return False
 
+    def update_portfolio_name(self, old_name, new_name, current_invested, monthly_sip, num_months, description, platform=None):
+        """
+        Renames a portfolio by:
+        1. Creating a new investment plan record
+        2. Updating SectorAllocation, StockAllocation, and Transactions records
+        3. Deleting the old investment plan record
+        Returns (success_bool, message).
+        """
+        headers = self._get_headers()
+        if not headers:
+            return False, "Not configured"
+
+        # 1. Create a new investment plan record
+        insert_success = self.upsert_investment_plan(
+            portfolio=new_name,
+            current_invested=current_invested,
+            monthly_sip=monthly_sip,
+            num_months=num_months,
+            description=description,
+            platform=platform
+        )
+        if not insert_success:
+            return False, f"Failed to create new investment plan '{new_name}'"
+
+        from urllib.parse import quote
+        safe_old = quote(str(old_name).strip(), safe="")
+
+        # 2. Update SectorAllocation
+        sector_endpoint = f"{self.url}/rest/v1/SectorAllocation?Portfolio=eq.{safe_old}"
+        try:
+            requests.patch(sector_endpoint, headers=headers, json={"Portfolio": new_name})
+        except Exception as e:
+            st.error(f"Error migrating SectorAllocation: {e}")
+
+        # 3. Update StockAllocation
+        stock_endpoint = f"{self.url}/rest/v1/StockAllocation?Portfolio=eq.{safe_old}"
+        try:
+            requests.patch(stock_endpoint, headers=headers, json={"Portfolio": new_name})
+        except Exception as e:
+            st.error(f"Error migrating StockAllocation: {e}")
+
+        # 4. Update Transactions
+        tx_endpoint = f"{self.url}/rest/v1/Transactions?Portfolio=eq.{safe_old}"
+        try:
+            requests.patch(tx_endpoint, headers=headers, json={"Portfolio": new_name})
+        except Exception as e:
+            st.error(f"Error migrating Transactions: {e}")
+
+        # 5. Delete the old investment plan
+        delete_success = self.delete_investment_plan(old_name)
+        if not delete_success:
+            return True, f"Portfolio renamed to {new_name}, but failed to delete old record '{old_name}'."
+
+        return True, f"Successfully renamed portfolio from '{old_name}' to '{new_name}'."
+
     def delete_investment_plan(self, portfolio):
         """Deletes an investment plan."""
         headers = self._get_headers()
