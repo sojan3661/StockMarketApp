@@ -318,6 +318,19 @@ for i, port_name in enumerate(portfolio_names):
             st.info("No sectors found!")
             continue
 
+        # Calculate sum of expected across all assets in the portfolio
+        portfolio_expected_sum = 0.0
+        for sector_row in db_sectors:
+            sec_name  = sector_row.get("Sector")
+            tar_alloc = sector_alloc_dict.get(sec_name, 0)
+            if not tar_alloc or tar_alloc <= 0:
+                continue
+            sec_stocks = [s for s in db_stocks if s.get("Sector") == sec_name]
+            for p in sec_stocks:
+                sym   = p.get("Symbol")
+                alloc = float(port_stock_allocations.get(sym, 0.0))
+                portfolio_expected_sum += total_expected * (tar_alloc / 100) * (alloc / 100)
+
         with st.form(f"alloc_form_{port_name}"):
 
             master_updates = []
@@ -379,6 +392,8 @@ for i, port_name in enumerate(portfolio_names):
                         sip_amount = expected / st.session_state[sip_months_key] if expected > 0 else 0
                         total_sip_amount += sip_amount
 
+                        project_alloc_pct = (expected / portfolio_expected_sum * 100) if portfolio_expected_sum > 0 else 0.0
+
                         rows.append({
                             "Symbol":       sym,
                             "Name":         name,
@@ -387,6 +402,7 @@ for i, port_name in enumerate(portfolio_names):
                             "Qty":          qty,
                             "Invested":     invested,
                             "Allocation %": alloc,
+                            "Project Allocation %": project_alloc_pct,
                             "Expected":     expected,
                             "Inflow":       inflow,
                             "SIP Amount":   sip_amount,
@@ -424,6 +440,7 @@ for i, port_name in enumerate(portfolio_names):
                                 max_value=100.0,
                                 step=0.5
                             ),
+                            "Project Allocation %": st.column_config.NumberColumn("Project Allocation %", format="%.2f%%"),
                             "LTP (INR)":    st.column_config.NumberColumn("LTP (INR)",   format="₹%.2f"),
                             "Invested":     st.column_config.NumberColumn("Invested",    format="₹%.2f"),
                             "Expected":     st.column_config.NumberColumn("Expected",    format="₹%.2f"),
@@ -432,7 +449,7 @@ for i, port_name in enumerate(portfolio_names):
                         },
                         disabled=[
                             "Symbol", "Name", "Country", "LTP (INR)",
-                            "Qty", "Invested", "Expected", "Inflow", "SIP Amount", "Buy"
+                            "Qty", "Invested", "Project Allocation %", "Expected", "Inflow", "SIP Amount", "Buy"
                         ]
                     )
 
