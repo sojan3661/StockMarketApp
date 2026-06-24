@@ -236,7 +236,7 @@ with col_ul:
     )
 
 with col_search:
-    if st.button("🔍 Search Stock / Mutual Fund", use_container_width=True):
+    if st.button("🔍 Search Assets", use_container_width=True):
         search_stock_dialog()
 
 if uploaded_asset_file is not None:
