@@ -356,8 +356,7 @@ for i, port_name in enumerate(portfolio_names):
                 alloc = float(port_stock_allocations.get(sym, 0.0))
                 portfolio_expected_sum += total_expected * (tar_alloc / 100) * (alloc / 100)
 
-        # Remove st.form to allow real-time recalculations on allocation updates
-        if True:
+        with st.form(f"alloc_form_{port_name}"):
 
             master_updates = []
 
