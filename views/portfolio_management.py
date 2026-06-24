@@ -187,7 +187,7 @@ def get_nav(nav_df, fund_name):
 with st.spinner("Loading data..."):
     db_sectors           = db.fetch_sectors()
     db_allocations       = db.fetch_allocations()
-    db_stocks            = db.fetch_stocks()
+    db_stocks            = sorted(db.fetch_stocks(), key=lambda x: x.get("Symbol", ""))
     db_stock_allocations = db.fetch_stock_allocations()
     open_transactions    = db.fetch_open_transactions()
     db_investment_plan   = db.fetch_investment_plan()
@@ -252,6 +252,12 @@ if not portfolio_names:
 # -----------------------------
 tabs = st.tabs(portfolio_names)
 
+with open("debug_editor.txt", "a") as f:
+    f.write(f"--- RERUN ---\n")
+    for k, v in st.session_state.items():
+        if "editor" in k:
+            f.write(f"Key: {k}, Value: {v}\n")
+
 for i, port_name in enumerate(portfolio_names):
 
     with tabs[i]:
@@ -270,6 +276,25 @@ for i, port_name in enumerate(portfolio_names):
             for a in db_stock_allocations
             if a.get("Portfolio") == port_name and a.get("Symbol")
         }
+
+        # Update port_stock_allocations with any edits currently in session state
+        for sector_row in db_sectors:
+            sec_name = sector_row.get("Sector")
+            if not sec_name:
+                continue
+            editor_key = f"editor_{port_name}_{sec_name}"
+            if editor_key in st.session_state:
+                edits = st.session_state[editor_key].get("edited_rows", {})
+                sec_stocks = [s for s in db_stocks if s.get("Sector") == sec_name]
+                for idx_str, changes in edits.items():
+                    try:
+                        idx = int(idx_str)
+                        if 0 <= idx < len(sec_stocks):
+                            sym = sec_stocks[idx].get("Symbol")
+                            if sym and "Allocation %" in changes:
+                                port_stock_allocations[sym] = float(changes["Allocation %"])
+                    except ValueError:
+                        pass
 
         # 2. Calculate Expected Investment for this specific portfolio
         plan_details    = next((p for p in plans_list if p.get("Portfolio") == port_name), {})
@@ -331,7 +356,8 @@ for i, port_name in enumerate(portfolio_names):
                 alloc = float(port_stock_allocations.get(sym, 0.0))
                 portfolio_expected_sum += total_expected * (tar_alloc / 100) * (alloc / 100)
 
-        with st.form(f"alloc_form_{port_name}"):
+        # Remove st.form to allow real-time recalculations on allocation updates
+        if True:
 
             master_updates = []
 
@@ -473,11 +499,22 @@ for i, port_name in enumerate(portfolio_names):
             sip_total_placeholder.metric("📊 Total SIP Amount",          f"₹{total_sip_amount:,.2f}")
 
             st.divider()
-            submitted = st.form_submit_button(
-                f"💾 Save {port_name} Asset Allocations",
-                type="primary",
-                use_container_width=True
-            )
+            col_calc, col_save = st.columns(2)
+            with col_calc:
+                recalc = st.form_submit_button(
+                    "🔄 Recalculate from Screen",
+                    use_container_width=True
+                )
+            with col_save:
+                submitted = st.form_submit_button(
+                    f"💾 Save {port_name} Asset Allocations",
+                    type="primary",
+                    use_container_width=True
+                )
+
+            if recalc:
+                st.info("Calculations updated from screen values.")
+                st.rerun()
 
             if submitted:
                 with st.spinner("Saving allocations..."):
@@ -485,6 +522,13 @@ for i, port_name in enumerate(portfolio_names):
 
                 if success:
                     st.success("🎉 Allocations saved successfully!")
+                    # Clear session state edits for this portfolio
+                    for sector_row in db_sectors:
+                        sec_name = sector_row.get("Sector")
+                        if sec_name:
+                            editor_key = f"editor_{port_name}_{sec_name}"
+                            if editor_key in st.session_state:
+                                del st.session_state[editor_key]
                     st.cache_data.clear()
                     st.rerun()
                 else:
