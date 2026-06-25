@@ -184,14 +184,35 @@ def get_nav(nav_df, fund_name):
 # -----------------------------
 # Load Database Data
 # -----------------------------
-with st.spinner("Loading data..."):
-    db_sectors           = db.fetch_sectors()
-    db_allocations       = db.fetch_allocations()
-    db_stocks            = sorted(db.fetch_stocks(), key=lambda x: x.get("Symbol", ""))
-    db_stock_allocations = db.fetch_stock_allocations()
-    open_transactions    = db.fetch_open_transactions()
-    db_investment_plan   = db.fetch_investment_plan()
-    db_currency_pairs    = db.fetch_currency_pairs()
+@st.cache_data(ttl=600)
+def load_portfolio_data():
+    with st.spinner("Loading data from database..."):
+        db_sectors           = db.fetch_sectors()
+        db_allocations       = db.fetch_allocations()
+        db_stocks            = sorted(db.fetch_stocks(), key=lambda x: x.get("Symbol", ""))
+        db_stock_allocations = db.fetch_stock_allocations()
+        open_transactions    = db.fetch_open_transactions()
+        db_investment_plan   = db.fetch_investment_plan()
+        db_currency_pairs    = db.fetch_currency_pairs()
+        return (
+            db_sectors,
+            db_allocations,
+            db_stocks,
+            db_stock_allocations,
+            open_transactions,
+            db_investment_plan,
+            db_currency_pairs
+        )
+
+(
+    db_sectors,
+    db_allocations,
+    db_stocks,
+    db_stock_allocations,
+    open_transactions,
+    db_investment_plan,
+    db_currency_pairs
+) = load_portfolio_data()
 
 nav_df = load_nav_data()
 
@@ -283,14 +304,15 @@ for i, port_name in enumerate(portfolio_names):
             if not sec_name:
                 continue
             editor_key = f"editor_{port_name}_{sec_name}"
-            if editor_key in st.session_state:
+            symbols_key = f"symbols_{port_name}_{sec_name}"
+            if editor_key in st.session_state and symbols_key in st.session_state:
                 edits = st.session_state[editor_key].get("edited_rows", {})
-                sec_stocks = [s for s in db_stocks if s.get("Sector") == sec_name]
+                displayed_symbols = st.session_state[symbols_key]
                 for idx_str, changes in edits.items():
                     try:
                         idx = int(idx_str)
-                        if 0 <= idx < len(sec_stocks):
-                            sym = sec_stocks[idx].get("Symbol")
+                        if 0 <= idx < len(displayed_symbols):
+                            sym = displayed_symbols[idx]
                             if sym and "Allocation %" in changes:
                                 port_stock_allocations[sym] = float(changes["Allocation %"])
                     except ValueError:
@@ -356,131 +378,88 @@ for i, port_name in enumerate(portfolio_names):
                 alloc = float(port_stock_allocations.get(sym, 0.0))
                 portfolio_expected_sum += total_expected * (tar_alloc / 100) * (alloc / 100)
 
-        with st.form(f"alloc_form_{port_name}"):
+        master_updates = []
 
-            master_updates = []
+        for sector_row in db_sectors:
 
-            for sector_row in db_sectors:
+            sector_name  = sector_row.get("Sector")
+            target_alloc = sector_alloc_dict.get(sector_name, 0)
 
-                sector_name  = sector_row.get("Sector")
-                target_alloc = sector_alloc_dict.get(sector_name, 0)
+            # Skip sectors with no allocation assigned for this portfolio
+            if not target_alloc or target_alloc <= 0:
+                continue
 
-                # Skip sectors with no allocation assigned for this portfolio
-                if not target_alloc or target_alloc <= 0:
+            sector_expected = total_expected * (target_alloc / 100)
+
+            with st.expander(
+                f"📁 {sector_name} (Target Sector Allocation: {target_alloc}%) - Expected ₹{sector_expected:,.2f}",
+                expanded=True
+            ):
+                sector_stocks = [s for s in db_stocks if s.get("Sector") == sector_name]
+
+                if not sector_stocks:
+                    st.info("No assets in this sector")
                     continue
 
-                sector_expected = total_expected * (target_alloc / 100)
+                rows = []
 
-                with st.expander(
-                    f"📁 {sector_name} (Target Sector Allocation: {target_alloc}%) - Expected ₹{sector_expected:,.2f}",
-                    expanded=True
-                ):
-                    sector_stocks = [s for s in db_stocks if s.get("Sector") == sector_name]
+                for p in sector_stocks:
+                    sym     = p.get("Symbol")
+                    name    = p.get("Name")
+                    country = (p.get("Country") or "INDIA").upper()
 
-                    if not sector_stocks:
-                        st.info("No assets in this sector")
-                        continue
+                    alloc = float(port_stock_allocations.get(sym, 0.0))
 
-                    rows = []
+                    agg      = tx_agg.get((port_name, sym), {"Qty": 0, "InvestedTotal": 0})
+                    qty      = agg["Qty"]
+                    invested = agg["InvestedTotal"]
 
-                    for p in sector_stocks:
-                        sym     = p.get("Symbol")
-                        name    = p.get("Name")
-                        country = (p.get("Country") or "INDIA").upper()
-
-                        alloc = float(port_stock_allocations.get(sym, 0.0))
-
-                        agg      = tx_agg.get((port_name, sym), {"Qty": 0, "InvestedTotal": 0})
-                        qty      = agg["Qty"]
-                        invested = agg["InvestedTotal"]
-
-                        # Fetch native price, then convert to INR for non-India stocks
-                        if p.get("Equity", True):
-                            if p.get("Listed", True):
-                                native_price = get_stock_price(sym)
-                            else:
-                                native_price = float(p.get("LTP") or 0.0)
+                    # Fetch native price, then convert to INR for non-India stocks
+                    if p.get("Equity", True):
+                        if p.get("Listed", True):
+                            native_price = get_stock_price(sym)
                         else:
-                            native_price = get_nav(nav_df, sym)
+                            native_price = float(p.get("LTP") or 0.0)
+                    else:
+                        native_price = get_nav(nav_df, sym)
 
-                        # Convert to INR — no-op (×1.0) for Indian stocks
-                        price_inr = to_inr(native_price, country, currency_pairs_map, fx_rates)
+                    # Convert to INR — no-op (×1.0) for Indian stocks
+                    price_inr = to_inr(native_price, country, currency_pairs_map, fx_rates)
 
-                        # Asset target expected = Total × Sector % × Asset %
-                        expected = total_expected * (target_alloc / 100) * (alloc / 100)
-                        inflow   = max(0, expected - invested)
+                    # Asset target expected = Total × Sector % × Asset %
+                    expected = total_expected * (target_alloc / 100) * (alloc / 100)
+                    inflow   = max(0, expected - invested)
 
-                        total_inflow += inflow
+                    total_inflow += inflow
 
-                        buy = math.ceil(inflow / price_inr) if price_inr > 0 else 0
+                    buy = math.ceil(inflow / price_inr) if price_inr > 0 else 0
 
-                        sip_amount = expected / st.session_state[sip_months_key] if expected > 0 else 0
-                        total_sip_amount += sip_amount
+                    sip_amount = expected / st.session_state[sip_months_key] if expected > 0 else 0
+                    total_sip_amount += sip_amount
 
-                        project_alloc_pct = (expected / portfolio_expected_sum * 100) if portfolio_expected_sum > 0 else 0.0
+                    project_alloc_pct = (expected / portfolio_expected_sum * 100) if portfolio_expected_sum > 0 else 0.0
 
-                        rows.append({
-                            "Symbol":       sym,
-                            "Name":         name,
-                            "Country":      country,
-                            "LTP (INR)":    price_inr,
-                            "Qty":          qty,
-                            "Invested":     invested,
-                            "Allocation %": alloc,
-                            "Project Allocation %": project_alloc_pct,
-                            "Expected":     expected,
-                            "Inflow":       inflow,
-                            "SIP Amount":   sip_amount,
-                            "Buy":          buy,
-                        })
+                    rows.append({
+                        "Symbol":       sym,
+                        "Name":         name,
+                        "Country":      country,
+                        "LTP (INR)":    price_inr,
+                        "Qty":          qty,
+                        "Invested":     invested,
+                        "Allocation %": alloc,
+                        "Project Allocation %": project_alloc_pct,
+                        "Expected":     expected,
+                        "Inflow":       inflow,
+                        "SIP Amount":   sip_amount,
+                        "Buy":          buy,
+                    })
 
-                    df = pd.DataFrame(rows)
+                df = pd.DataFrame(rows)
 
-                    display_df = df[df["Inflow"] > 0] if show_only_inflow else df
+                display_df = df[df["Inflow"] > 0] if show_only_inflow else df
 
-                    if display_df.empty:
-                        sector_sum = df["Allocation %"].sum()
-                        if sector_sum > 100:
-                            st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
-                        else:
-                            st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
-
-                        updates = df[["Symbol", "Name", "Allocation %"]].rename(
-                            columns={"Allocation %": "Allocation"}
-                        )
-                        master_updates.extend(updates.to_dict("records"))
-                        continue
-
-                    edited_df = st.data_editor(
-                        display_df,
-                        key=f"editor_{port_name}_{sector_name}",
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "Name":         None,   # Hidden — used internally
-                            "Country":      None,   # Hidden — used for FX only
-                            "Allocation %": st.column_config.NumberColumn(
-                                "Allocation %",
-                                min_value=0.0,
-                                max_value=100.0,
-                                step=0.5
-                            ),
-                            "Project Allocation %": st.column_config.NumberColumn("Project Allocation %", format="%.2f%%"),
-                            "LTP (INR)":    st.column_config.NumberColumn("LTP (INR)",   format="₹%.2f"),
-                            "Invested":     st.column_config.NumberColumn("Invested",    format="₹%.2f"),
-                            "Expected":     st.column_config.NumberColumn("Expected",    format="₹%.2f"),
-                            "Inflow":       st.column_config.NumberColumn("Inflow",      format="₹%.2f"),
-                            "SIP Amount":   st.column_config.NumberColumn("SIP Amount",  format="₹%.2f"),
-                        },
-                        disabled=[
-                            "Symbol", "Name", "Country", "LTP (INR)",
-                            "Qty", "Invested", "Project Allocation %", "Expected", "Inflow", "SIP Amount", "Buy"
-                        ]
-                    )
-
-                    df.update(edited_df)
-
-                    # Allocation validation
+                if display_df.empty:
+                    st.session_state[f"symbols_{port_name}_{sector_name}"] = []
                     sector_sum = df["Allocation %"].sum()
                     if sector_sum > 100:
                         st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
@@ -491,44 +470,82 @@ for i, port_name in enumerate(portfolio_names):
                         columns={"Allocation %": "Allocation"}
                     )
                     master_updates.extend(updates.to_dict("records"))
+                    continue
 
-            displayed_expected_investment = current_invested + total_inflow
-            expected_metric_placeholder.metric("🎯 Expected Investment", f"₹{displayed_expected_investment:,.2f}")
-            inflow_metric_placeholder.metric("💵 Total Inflow",          f"₹{total_inflow:,.2f}")
-            sip_total_placeholder.metric("📊 Total SIP Amount",          f"₹{total_sip_amount:,.2f}")
+                # Save the displayed symbols list in session state so we can map edits on the next run
+                st.session_state[f"symbols_{port_name}_{sector_name}"] = display_df["Symbol"].tolist()
 
-            st.divider()
-            col_calc, col_save = st.columns(2)
-            with col_calc:
-                recalc = st.form_submit_button(
-                    "🔄 Recalculate from Screen",
-                    use_container_width=True
+                edited_df = st.data_editor(
+                    display_df,
+                    key=f"editor_{port_name}_{sector_name}",
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Name":         None,   # Hidden — used internally
+                        "Country":      None,   # Hidden — used for FX only
+                        "Allocation %": st.column_config.NumberColumn(
+                            "Allocation %",
+                            min_value=0.0,
+                            max_value=100.0,
+                            step=0.5
+                        ),
+                        "Project Allocation %": st.column_config.NumberColumn("Project Allocation %", format="%.2f%%"),
+                        "LTP (INR)":    st.column_config.NumberColumn("LTP (INR)",   format="₹%.2f"),
+                        "Invested":     st.column_config.NumberColumn("Invested",    format="₹%.2f"),
+                        "Expected":     st.column_config.NumberColumn("Expected",    format="₹%.2f"),
+                        "Inflow":       st.column_config.NumberColumn("Inflow",      format="₹%.2f"),
+                        "SIP Amount":   st.column_config.NumberColumn("SIP Amount",  format="₹%.2f"),
+                    },
+                    disabled=[
+                        "Symbol", "Name", "Country", "LTP (INR)",
+                        "Qty", "Invested", "Project Allocation %", "Expected", "Inflow", "SIP Amount", "Buy"
+                    ]
                 )
-            with col_save:
-                submitted = st.form_submit_button(
-                    f"💾 Save {port_name} Asset Allocations",
-                    type="primary",
-                    use_container_width=True
-                )
 
-            if recalc:
-                st.info("Calculations updated from screen values.")
-                st.rerun()
+                df.update(edited_df)
 
-            if submitted:
-                with st.spinner("Saving allocations..."):
-                    success = db.upsert_stock_allocations(master_updates, port_name)
-
-                if success:
-                    st.success("🎉 Allocations saved successfully!")
-                    # Clear session state edits for this portfolio
-                    for sector_row in db_sectors:
-                        sec_name = sector_row.get("Sector")
-                        if sec_name:
-                            editor_key = f"editor_{port_name}_{sec_name}"
-                            if editor_key in st.session_state:
-                                del st.session_state[editor_key]
-                    st.cache_data.clear()
-                    st.rerun()
+                # Allocation validation
+                sector_sum = df["Allocation %"].sum()
+                if sector_sum > 100:
+                    st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
                 else:
-                    st.error("Error saving allocations")
+                    st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
+
+                updates = df[["Symbol", "Name", "Allocation %"]].rename(
+                    columns={"Allocation %": "Allocation"}
+                )
+                master_updates.extend(updates.to_dict("records"))
+
+        displayed_expected_investment = current_invested + total_inflow
+        expected_metric_placeholder.metric("🎯 Expected Investment", f"₹{displayed_expected_investment:,.2f}")
+        inflow_metric_placeholder.metric("💵 Total Inflow",          f"₹{total_inflow:,.2f}")
+        sip_total_placeholder.metric("📊 Total SIP Amount",          f"₹{total_sip_amount:,.2f}")
+
+        st.divider()
+        submitted = st.button(
+            f"💾 Save {port_name} Asset Allocations",
+            type="primary",
+            use_container_width=True,
+            key=f"save_btn_{port_name}"
+        )
+
+        if submitted:
+            with st.spinner("Saving allocations..."):
+                success = db.upsert_stock_allocations(master_updates, port_name)
+
+            if success:
+                st.success("🎉 Allocations saved successfully!")
+                # Clear session state edits and symbols list for this portfolio
+                for sector_row in db_sectors:
+                    sec_name = sector_row.get("Sector")
+                    if sec_name:
+                        editor_key = f"editor_{port_name}_{sec_name}"
+                        symbols_key = f"symbols_{port_name}_{sec_name}"
+                        if editor_key in st.session_state:
+                            del st.session_state[editor_key]
+                        if symbols_key in st.session_state:
+                            del st.session_state[symbols_key]
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("Error saving allocations")
