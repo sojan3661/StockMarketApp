@@ -901,11 +901,14 @@ class SupabaseClient:
         if not headers:
             return []
             
-        endpoint = f"{self.url}/rest/v1/Investment%20Plan?select=*"
+        endpoint = f"{self.url}/rest/v1/Investment%20Plan?select=*&order=Portfolio.asc"
         try:
             response = requests.get(endpoint, headers=headers)
             response.raise_for_status()
-            return response.json()
+            res = response.json()
+            if isinstance(res, list):
+                res = sorted(res, key=lambda x: str(x.get("Portfolio", "")).lower())
+            return res
         except Exception as e:
             st.error(f"Error fetching investment plans: {e}")
             return []

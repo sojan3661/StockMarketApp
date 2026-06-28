@@ -121,11 +121,11 @@ else:
             
             # --- EDIT TAB ---
             with tab_edit:
-                with st.form(f"edit_plan_form_{index}"):
+                with st.form(f"edit_plan_form_{port_id}"):
                     edit_portfolio_name = st.text_input(
                         "Portfolio Name*",
                         value=port_id,
-                        key=f"edit_name_{index}",
+                        key=f"edit_name_{port_id}",
                         help="Change the name of this portfolio. This will update it in all transactions and allocations."
                     )
                     
@@ -136,14 +136,14 @@ else:
                             value=float(row.get("Current Invested Amount", 0)),
                             min_value=0.0,
                             step=0.01,
-                            key=f"edit_inv_{index}"
+                            key=f"edit_inv_{port_id}"
                         )
                         edit_sip = st.number_input(
                             "Monthly SIP",
                             value=float(row.get("Monthly SIP") or 0.0),
                             min_value=0.0,
                             step=0.01,
-                            key=f"edit_sip_{index}"
+                            key=f"edit_sip_{port_id}"
                         )
                     with ec2:
                         edit_months = st.number_input(
@@ -151,17 +151,17 @@ else:
                             value=int(row.get("Number of Months") or 0),
                             min_value=0,
                             step=1,
-                            key=f"edit_mon_{index}"
+                            key=f"edit_mon_{port_id}"
                         )
                         edit_desc = st.text_input(
                             "Description",
                             value=str(row.get("Description") or "") if pd.notna(row.get("Description")) else "",
-                            key=f"edit_desc_{index}"
+                            key=f"edit_desc_{port_id}"
                         )
                         edit_platform = st.text_input(
                             "Platform",
                             value=str(row.get("Platform") or "") if pd.notna(row.get("Platform")) else "",
-                            key=f"edit_plat_{index}"
+                            key=f"edit_plat_{port_id}"
                         )
                     
                     edit_submitted = st.form_submit_button("Update Plan")
@@ -208,7 +208,7 @@ else:
                 st.warning(f"Are you sure you want to delete the plan **{port_id}**? This action cannot be undone.")
                 
                 # Use a regular button (not inside a form) for immediate action
-                if st.button(f"Delete {port_id}", type="primary", key=f"del_btn_{index}"):
+                if st.button(f"Delete {port_id}", type="primary", key=f"del_btn_{port_id}"):
                     if db.delete_investment_plan(portfolio=port_id):
                         st.success(f"Deleted {port_id} successfully!")
                         refresh_data()
