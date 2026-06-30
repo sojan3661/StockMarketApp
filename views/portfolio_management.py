@@ -292,11 +292,21 @@ for i, port_name in enumerate(portfolio_names):
         }
 
         # 1b. Filter stock targets for this specific portfolio
-        port_stock_allocations = {
-            a["Symbol"]: a["Allocation"]
-            for a in db_stock_allocations
-            if a.get("Portfolio") == port_name and a.get("Symbol")
-        }
+        alloc_state_key = f"port_stock_allocations_{port_name}"
+        if alloc_state_key not in st.session_state:
+            # Get existing allocations
+            existing_allocs = {
+                a["Symbol"]: a["Allocation"]
+                for a in db_stock_allocations
+                if a.get("Portfolio") == port_name and a.get("Symbol")
+            }
+            # Initialize with all stocks (defaulting to 0.0 if not present)
+            st.session_state[alloc_state_key] = {
+                s["Symbol"]: existing_allocs.get(s["Symbol"], 0.0)
+                for s in db_stocks
+                if s.get("Symbol")
+            }
+        port_stock_allocations = st.session_state[alloc_state_key]
 
         # Update port_stock_allocations with any edits currently in session state
         for sector_row in db_sectors:
@@ -535,7 +545,9 @@ for i, port_name in enumerate(portfolio_names):
 
             if success:
                 st.success("🎉 Allocations saved successfully!")
-                # Clear session state edits and symbols list for this portfolio
+                # Clear session state edits, allocations state, and symbols list for this portfolio
+                if alloc_state_key in st.session_state:
+                    del st.session_state[alloc_state_key]
                 for sector_row in db_sectors:
                     sec_name = sector_row.get("Sector")
                     if sec_name:
