@@ -445,120 +445,146 @@ if not stocks_data:
 else:
     market_cap_options = ["Large Cap", "Mid Cap", "Small Cap", "Multi Cap", "ETF", "NA"]
 
+    # Group assets by Sector
+    assets_by_sector = {}
     for item in stocks_data:
-        sym   = item.get("Symbol", "Unknown")
-        name  = item.get("Name", "Unknown")
-        is_eq = item.get("Equity", False)
-        sec   = item.get("Sector", "Unknown")
-        is_lst = item.get("Listed", True)
-        mcap  = item.get("MarketCap", "NA")
-
-        a_type   = "Stock" if is_eq else "Mutual Fund"
-        l_status = "Listed" if is_lst else "Unlisted"
-        ltp      = item.get("LTP")
-        current_country = item.get("Country", "INDIA")
+        sec = item.get("Sector") or "Uncategorized"
+        if sec not in assets_by_sector:
+            assets_by_sector[sec] = []
+        assets_by_sector[sec].append(item)
+    
+    # Sort sector names (Uncategorized at the end)
+    sorted_sectors = sorted([s for s in assets_by_sector.keys() if s != "Uncategorized"])
+    if "Uncategorized" in assets_by_sector:
+        sorted_sectors.append("Uncategorized")
         
-        # Adding a visual tag for Asset type and Listing status
-        color_tag = "#3B82F6" if a_type == "Stock" else "#4ADE80"
+    for sector_name in sorted_sectors:
+        sector_assets = assets_by_sector[sector_name]
         
-        with st.expander(f"{name} ({sym}) — {mcap}"):
-            st.markdown(
-                f"""
-                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                    <span style="background-color: {color_tag}20; color: {color_tag}; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">{a_type}</span>
-                    <span style="background-color: #4B556350; color: #9CA3AF; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{l_status}</span>
-                    <span style="background-color: #6366F120; color: #818CF8; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{sec}</span>
-                    {f'<span style="background-color: #F59E0B20; color: #F59E0B; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">LTP: ₹{ltp}</span>' if ltp is not None else ''}
-                </div>
-                """, unsafe_allow_html=True
-            )
-            tab_edit, tab_delete = st.tabs(["✏️ Edit", "🗑️ Delete"])
+        st.markdown(
+            f"""
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 25px; margin-bottom: 15px; border-bottom: 2px solid #3B82F620; padding-bottom: 8px;">
+                <h3 style="margin: 0; font-size: 1.4rem;">📁 {sector_name}</h3>
+                <span style="background-color: #3B82F620; color: #3B82F6; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; margin-top: 4px;">{len(sector_assets)}</span>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+        
+        for item in sector_assets:
+            sym   = item.get("Symbol", "Unknown")
+            name  = item.get("Name", "Unknown")
+            is_eq = item.get("Equity", False)
+            sec   = item.get("Sector", "Unknown")
+            is_lst = item.get("Listed", True)
+            mcap  = item.get("MarketCap", "NA")
 
-            with tab_edit:
-                # Country selector outside the form
-                edit_country_pre = st.selectbox(
-                    "Country",
-                    options=available_countries,
-                    index=available_countries.index(current_country) if current_country in available_countries else 0,
-                    key=f"edit_country_pre_{sym}"
+            a_type   = "Stock" if is_eq else "Mutual Fund"
+            l_status = "Listed" if is_lst else "Unlisted"
+            ltp      = item.get("LTP")
+            current_country = item.get("Country", "INDIA")
+            
+            # Adding a visual tag for Asset type and Listing status
+            color_tag = "#3B82F6" if a_type == "Stock" else "#4ADE80"
+            
+            with st.expander(f"{name} ({sym}) — {mcap}"):
+                st.markdown(
+                    f"""
+                    <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                        <span style="background-color: {color_tag}20; color: {color_tag}; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">{a_type}</span>
+                        <span style="background-color: #4B556350; color: #9CA3AF; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{l_status}</span>
+                        <span style="background-color: #6366F120; color: #818CF8; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{sec}</span>
+                        {f'<span style="background-color: #F59E0B20; color: #F59E0B; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">LTP: ₹{ltp}</span>' if ltp is not None else ''}
+                    </div>
+                    """, unsafe_allow_html=True
                 )
+                tab_edit, tab_delete = st.tabs(["✏️ Edit", "🗑️ Delete"])
 
-                with st.form(f"edit_form_{sym}"):
-                    ec1, ec2 = st.columns(2)
-                    with ec1:
-                        new_sym_input = st.text_input(
-                            "Symbol",
-                            value=sym
-                        )
-                        new_name = st.text_input(
-                            "Name",
-                            value=name
-                        )
-                        new_mcap = st.selectbox(
-                            "Market Cap",
-                            options=market_cap_options,
-                            index=market_cap_options.index(mcap) if mcap in market_cap_options else len(market_cap_options) - 1
-                        )
-                    with ec2:
-                        new_sector = st.selectbox(
-                            "Sector",
-                            options=existing_sectors,
-                            index=existing_sectors.index(sec) if sec in existing_sectors else 0
-                        )
-                        if not is_lst or is_eq:
-                             new_ltp = st.number_input("Last Traded Price (LTP)", value=float(ltp or 0.0), min_value=0.0, step=0.1, key=f"ltp_edit_{sym}")
-                        else:
-                             new_ltp = None
-                             
-                        new_asset_type = st.selectbox(
-                            "Asset Type",
-                            options=["Stock", "Mutual Fund"],
-                            index=0 if is_eq else 1
-                        )
-                        new_listing = st.selectbox(
-                            "Listing Status",
-                            options=["Listed", "Unlisted"],
-                            index=0 if is_lst else 1
-                        )
+                with tab_edit:
+                    # Country selector outside the form
+                    edit_country_pre = st.selectbox(
+                        "Country",
+                        options=available_countries,
+                        index=available_countries.index(current_country) if current_country in available_countries else 0,
+                        key=f"edit_country_pre_{sym}"
+                    )
 
-                    save_btn = st.form_submit_button("💾 Save Changes", type="primary")
-                    if save_btn:
-                        new_is_eq  = new_asset_type == "Stock"
-                        new_is_lst = True if new_asset_type == "Mutual Fund" else (new_listing == "Listed")
-                        new_s = new_sym_input.strip()
-                        
-                        if not new_s or not new_name.strip():
-                            st.error("Symbol and Name cannot be empty.")
-                        elif new_s != sym:
-                            # Symbol has changed - Trigger migration
-                            with st.spinner(f"Migrating symbol from '{sym}' to '{new_s}'..."):
-                                success, msg = db.update_stock_symbol(
-                                    old_symbol=sym,
-                                    new_symbol=new_s,
-                                    name=new_name.strip(),
-                                    is_equity=new_is_eq,
-                                    sector=new_sector,
-                                    is_listed=new_is_lst,
-                                    market_cap=new_mcap,
-                                    ltp=new_ltp,
-                                    country=edit_country_pre
-                                )
-                            if success:
-                                st.success(msg)
-                                st.rerun()
+                    with st.form(f"edit_form_{sym}"):
+                        ec1, ec2 = st.columns(2)
+                        with ec1:
+                            new_sym_input = st.text_input(
+                                "Symbol",
+                                value=sym
+                            )
+                            new_name = st.text_input(
+                                "Name",
+                                value=name
+                            )
+                            new_mcap = st.selectbox(
+                                "Market Cap",
+                                options=market_cap_options,
+                                index=market_cap_options.index(mcap) if mcap in market_cap_options else len(market_cap_options) - 1
+                            )
+                        with ec2:
+                            new_sector = st.selectbox(
+                                "Sector",
+                                options=existing_sectors,
+                                index=existing_sectors.index(sec) if sec in existing_sectors else 0
+                            )
+                            if not is_lst or is_eq:
+                                 new_ltp = st.number_input("Last Traded Price (LTP)", value=float(ltp or 0.0), min_value=0.0, step=0.1, key=f"ltp_edit_{sym}")
                             else:
-                                st.error(msg)
-                        else:
-                            # Standard Update
-                            ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap, new_ltp, edit_country_pre)
-                            if ok:
-                                st.success(f"Updated '{sym}' successfully!")
-                                st.rerun()
+                                 new_ltp = None
+                                 
+                            new_asset_type = st.selectbox(
+                                "Asset Type",
+                                options=["Stock", "Mutual Fund"],
+                                index=0 if is_eq else 1
+                            )
+                            new_listing = st.selectbox(
+                                "Listing Status",
+                                options=["Listed", "Unlisted"],
+                                index=0 if is_lst else 1
+                            )
 
-            with tab_delete:
-                st.warning(f"Are you sure you want to delete **{name}** ({sym})? This cannot be undone.")
-                if st.button("🗑️ Confirm Delete", key=f"del_{sym}", type="primary"):
-                    ok = db.delete_stock(sym)
-                    if ok:
-                        st.success(f"Deleted '{sym}'.")
-                        st.rerun()
+                        save_btn = st.form_submit_button("💾 Save Changes", type="primary")
+                        if save_btn:
+                            new_is_eq  = new_asset_type == "Stock"
+                            new_is_lst = True if new_asset_type == "Mutual Fund" else (new_listing == "Listed")
+                            new_s = new_sym_input.strip()
+                            
+                            if not new_s or not new_name.strip():
+                                st.error("Symbol and Name cannot be empty.")
+                            elif new_s != sym:
+                                # Symbol has changed - Trigger migration
+                                with st.spinner(f"Migrating symbol from '{sym}' to '{new_s}'..."):
+                                    success, msg = db.update_stock_symbol(
+                                        old_symbol=sym,
+                                        new_symbol=new_s,
+                                        name=new_name.strip(),
+                                        is_equity=new_is_eq,
+                                        sector=new_sector,
+                                        is_listed=new_is_lst,
+                                        market_cap=new_mcap,
+                                        ltp=new_ltp,
+                                        country=edit_country_pre
+                                    )
+                                if success:
+                                    st.success(msg)
+                                    st.rerun()
+                                else:
+                                    st.error(msg)
+                            else:
+                                # Standard Update
+                                ok = db.update_stock(sym, new_name.strip(), new_is_eq, new_sector, new_is_lst, new_mcap, new_ltp, edit_country_pre)
+                                if ok:
+                                    st.success(f"Updated '{sym}' successfully!")
+                                    st.rerun()
+
+                with tab_delete:
+                    st.warning(f"Are you sure you want to delete **{name}** ({sym})? This cannot be undone.")
+                    if st.button("🗑️ Confirm Delete", key=f"del_{sym}", type="primary"):
+                        ok = db.delete_stock(sym)
+                        if ok:
+                            st.success(f"Deleted '{sym}'.")
+                            st.rerun()
