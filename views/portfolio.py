@@ -553,7 +553,6 @@ else:
                 _native_fmt   = f"{_native_sym} %.2f"
 
                 st.divider()
-                st.subheader(f"Order History: {selected_name} ({selected_symbol})")
 
                 with st.spinner(f"Loading transaction history for {selected_symbol}..."):
                     if port_name == "Overall Portfolio":
@@ -571,6 +570,65 @@ else:
                     if "SellAvg" not in hist_df.columns:
                         hist_df["SellAvg"] = None
 
+                    # ---- Line Chart for Open Buy Transactions ----
+                    chart_df = hist_df[hist_df["SellAvg"].isna() | (hist_df["SellAvg"].isnull()) | (hist_df["SellAvg"] == "")]
+                    if not chart_df.empty:
+                        chart_df = chart_df.copy()
+                        chart_df["BuyDate"] = pd.to_datetime(chart_df["BuyDate"])
+                        
+                        chart_df["Qty"] = pd.to_numeric(chart_df["Qty"], errors="coerce").fillna(0.0)
+                        chart_df["BuyAvg"] = pd.to_numeric(chart_df["BuyAvg"], errors="coerce").fillna(0.0)
+                        
+                        if "BuyValue" not in chart_df.columns:
+                            chart_df["BuyValue"] = chart_df["Qty"] * chart_df["BuyAvg"]
+                        else:
+                            chart_df["BuyValue"] = pd.to_numeric(chart_df["BuyValue"], errors="coerce").fillna(chart_df["Qty"] * chart_df["BuyAvg"])
+                        
+                        # Group by BuyDate to handle multiple buys on the same day
+                        grouped_chart = chart_df.groupby("BuyDate").agg({
+                            "Qty": "sum",
+                            "BuyValue": "sum"
+                        }).reset_index()
+                        
+                        grouped_chart["BuyPrice"] = grouped_chart.apply(
+                            lambda r: r["BuyValue"] / r["Qty"] if r["Qty"] > 0 else 0.0, axis=1
+                        )
+                        grouped_chart = grouped_chart.sort_values("BuyDate")
+                        
+                        st.subheader(f"Buy Price Trend: {selected_name} ({selected_symbol})")
+                        
+                        import plotly.graph_objects as go
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=grouped_chart["BuyDate"],
+                            y=grouped_chart["BuyPrice"],
+                            mode="lines+markers",
+                            line=dict(color="#10B981", width=3),
+                            marker=dict(size=8, color="#10B981", symbol="circle"),
+                            hovertemplate=(
+                                "<b>Date</b>: %{x|%d-%b-%Y}<br>" +
+                                "<b>Buy Price</b>: " + _native_sym + "%{y:,.2f}<br>" +
+                                "<b>Quantity</b>: %{customdata[0]:,.4f}<br>" +
+                                "<b>Buy Value</b>: " + _native_sym + "%{customdata[1]:,.2f}<extra></extra>"
+                            ),
+                            customdata=grouped_chart[["Qty", "BuyValue"]].values
+                        ))
+                        fig.update_layout(
+                            xaxis_title="Buy Date",
+                            yaxis_title=f"Buy Price ({_base_currency})",
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            font=dict(color="#E2E8F0"),
+                            margin=dict(t=10, b=20, l=10, r=10),
+                            height=300,
+                            xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)", tickformat=",.2f")
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        st.divider()
+
+                    # ---- Order History Table ----
+                    st.subheader(f"Order History: {selected_name} ({selected_symbol})")
                     display_hist = hist_df[["BuyDate", "Qty", "BuyAvg", "SellDate", "SellAvg"]].copy()
 
                     for date_col in ["BuyDate", "SellDate"]:
@@ -583,7 +641,7 @@ else:
                         use_container_width=True,
                         hide_index=True,
                         on_select="rerun",
-                        selection_mode="single-row",
+                        selection_mode="multi-row",
                         key=f"history_grid_{port_name}",
                         column_config={
                             "BuyDate":  "Buy Date",
@@ -596,74 +654,86 @@ else:
 
                     selected_hist_rows = event_hist.selection.rows
                     if selected_hist_rows:
-                        selected_hist_index = selected_hist_rows[0]
-                        tx_id    = hist_df.iloc[selected_hist_index].get("id")
-                        sell_date= hist_df.iloc[selected_hist_index].get("SellDate")
+                        if len(selected_hist_rows) == 1:
+                            selected_hist_index = selected_hist_rows[0]
+                            tx_id    = hist_df.iloc[selected_hist_index].get("id")
+                            sell_date= hist_df.iloc[selected_hist_index].get("SellDate")
 
-                        if tx_id:
-                            st.write("")
-                            action_col1, action_col2 = st.columns([1, 2])
+                            if tx_id:
+                                st.write("")
+                                action_col1, action_col2 = st.columns([1, 2])
 
-                            with action_col1:
-                                if pd.isna(sell_date) or sell_date is None:
-                                    action_label = "🗑️ Delete Buy Transaction"
-                                    help_text    = "This will permanently delete this buy transaction."
-                                else:
-                                    action_label = "🗑️ Delete Sell Details"
-                                    help_text    = "This will remove the sell date and sell rate, converting it back to an open buy transaction."
+                                with action_col1:
+                                    if pd.isna(sell_date) or sell_date is None:
+                                        action_label = "🗑️ Delete Buy Transaction"
+                                        help_text    = "This will permanently delete this buy transaction."
+                                    else:
+                                        action_label = "🗑️ Delete Sell Details"
+                                        help_text    = "This will remove the sell date and sell rate, converting it back to an open buy transaction."
 
-                                if st.button(action_label, type="primary", help=help_text, key=f"del_tx_{tx_id}_{port_name}"):
-                                    with st.spinner("Processing..."):
-                                        if pd.isna(sell_date) or sell_date is None:
-                                            success = db.delete_transaction(tx_id)
-                                        else:
-                                            success = db.revert_sell_transaction(tx_id)
+                                    if st.button(action_label, type="primary", help=help_text, key=f"del_tx_{tx_id}_{port_name}"):
+                                        with st.spinner("Processing..."):
+                                            if pd.isna(sell_date) or sell_date is None:
+                                                success = db.delete_transaction(tx_id)
+                                            else:
+                                                success = db.revert_sell_transaction(tx_id)
 
-                                        if success:
-                                            st.success("Transaction updated successfully!")
-                                            st.rerun()
-
-                            with action_col2:
-                                with st.expander("✏️ Edit Transaction"):
-                                    row_data = hist_df.iloc[selected_hist_index]
-                                    with st.form(key=f"edit_form_{tx_id}_{port_name}"):
-                                        try:
-                                            b_date_val = pd.to_datetime(row_data.get("BuyDate")).date()
-                                        except Exception:
-                                            b_date_val = None
-
-                                        s_date_val = None
-                                        if not pd.isna(row_data.get("SellDate")) and row_data.get("SellDate") is not None:
-                                            try:
-                                                s_date_val = pd.to_datetime(row_data.get("SellDate")).date()
-                                            except Exception:
-                                                s_date_val = None
-
-                                        new_qty      = st.number_input("Quantity",  value=float(row_data.get("Qty", 0.0)),    format="%.4f")
-                                        new_buy_avg  = st.number_input(f"Buy Price ({_base_currency})", value=float(row_data.get("BuyAvg", 0.0)), format="%.2f")
-                                        new_buy_date = st.date_input("Buy Date", value=b_date_val)
-
-                                        has_sell     = not pd.isna(row_data.get("SellAvg")) and row_data.get("SellAvg") is not None
-                                        new_sell_avg = None
-                                        new_sell_date= None
-
-                                        if has_sell:
-                                            new_sell_avg  = st.number_input(f"Sell Price ({_base_currency})", value=float(row_data.get("SellAvg", 0.0)), format="%.2f")
-                                            new_sell_date = st.date_input("Sell Date", value=s_date_val)
-
-                                        submit_edit = st.form_submit_button("Update Transaction")
-                                        if submit_edit:
-                                            sell_d_str = new_sell_date.strftime("%Y-%m-%d") if new_sell_date else None
-                                            buy_d_str  = new_buy_date.strftime("%Y-%m-%d")  if new_buy_date else None
-
-                                            success = db.update_transaction(
-                                                tx_id=tx_id,
-                                                qty=new_qty,
-                                                buy_avg=new_buy_avg,
-                                                buy_date=buy_d_str,
-                                                sell_date=sell_d_str,
-                                                sell_avg=new_sell_avg
-                                            )
                                             if success:
                                                 st.success("Transaction updated successfully!")
                                                 st.rerun()
+
+                                with action_col2:
+                                    with st.expander("✏️ Edit Transaction"):
+                                        row_data = hist_df.iloc[selected_hist_index]
+                                        with st.form(key=f"edit_form_{tx_id}_{port_name}"):
+                                            try:
+                                                b_date_val = pd.to_datetime(row_data.get("BuyDate")).date()
+                                            except Exception:
+                                                b_date_val = None
+
+                                            s_date_val = None
+                                            if not pd.isna(row_data.get("SellDate")) and row_data.get("SellDate") is not None:
+                                                try:
+                                                    s_date_val = pd.to_datetime(row_data.get("SellDate")).date()
+                                                except Exception:
+                                                    s_date_val = None
+
+                                            new_qty      = st.number_input("Quantity",  value=float(row_data.get("Qty", 0.0)),    format="%.4f")
+                                            new_buy_avg  = st.number_input(f"Buy Price ({_base_currency})", value=float(row_data.get("BuyAvg", 0.0)), format="%.2f")
+                                            new_buy_date = st.date_input("Buy Date", value=b_date_val)
+
+                                            has_sell     = not pd.isna(row_data.get("SellAvg")) and row_data.get("SellAvg") is not None
+                                            new_sell_avg = None
+                                            new_sell_date= None
+
+                                            if has_sell:
+                                                new_sell_avg  = st.number_input(f"Sell Price ({_base_currency})", value=float(row_data.get("SellAvg", 0.0)), format="%.2f")
+                                                new_sell_date = st.date_input("Sell Date", value=s_date_val)
+
+                                            submit_edit = st.form_submit_button("Update Transaction")
+                                            if submit_edit:
+                                                sell_d_str = new_sell_date.strftime("%Y-%m-%d") if new_sell_date else None
+                                                buy_d_str  = new_buy_date.strftime("%Y-%m-%d")  if new_buy_date else None
+
+                                                success = db.update_transaction(
+                                                    tx_id=tx_id,
+                                                    qty=new_qty,
+                                                    buy_avg=new_buy_avg,
+                                                    buy_date=buy_d_str,
+                                                    sell_date=sell_d_str,
+                                                    sell_avg=new_sell_avg
+                                                )
+                                                if success:
+                                                    st.success("Transaction updated successfully!")
+                                                    st.rerun()
+                        else:
+                            # Multiple transactions selected
+                            tx_ids = [hist_df.iloc[idx].get("id") for idx in selected_hist_rows if hist_df.iloc[idx].get("id") is not None]
+                            if tx_ids:
+                                st.write("")
+                                if st.button(f"🗑️ Delete Selected Transactions ({len(tx_ids)})", type="primary", key=f"del_multiple_{port_name}"):
+                                    with st.spinner("Deleting selected transactions..."):
+                                        success = db.delete_transactions(tx_ids)
+                                        if success:
+                                            st.success("Selected transactions deleted successfully!")
+                                            st.rerun()
