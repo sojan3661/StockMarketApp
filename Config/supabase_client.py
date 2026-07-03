@@ -837,6 +837,30 @@ class SupabaseClient:
             st.error(f"Error deleting transaction: {e}")
             return False
 
+    def delete_transactions(self, tx_ids):
+        """Deletes multiple transactions by their IDs."""
+        if not tx_ids:
+            return True
+        headers = self._get_headers()
+        if not headers:
+            return False
+
+        id_str = ",".join(str(tid) for tid in tx_ids)
+        endpoint = f"{self.url}/rest/v1/Transactions?id=in.({id_str})"
+        try:
+            response = requests.delete(endpoint, headers=headers)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.HTTPError as e:
+            if response.status_code in (401, 403):
+                st.error("Error: RLS policy blocked the deletion.")
+            else:
+                st.error(f"Error deleting transactions: HTTP {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            st.error(f"Error deleting transactions: {e}")
+            return False
+
     def revert_sell_transaction(self, tx_id):
         """Removes the SellDate and SellAvg from a transaction, making it open again."""
         headers = self._get_headers()
