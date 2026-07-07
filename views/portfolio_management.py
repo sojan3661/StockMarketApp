@@ -20,6 +20,14 @@ if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.stop()
 
+if st.button("🔄 Refresh Data", help="Reload live prices and allocations"):
+    for k in list(st.session_state.keys()):
+        if k.startswith("port_stock_allocations_") or k.startswith("editor_") or k.startswith("symbols_"):
+            del st.session_state[k]
+    st.cache_data.clear()
+    st.rerun()
+
+
 
 # -----------------------------
 # Load Mutual Fund NAV (cached)
