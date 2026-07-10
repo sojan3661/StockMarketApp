@@ -7,6 +7,50 @@ import pandas as pd
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
 
+@st.dialog("Transaction Contribution Details", width="large")
+def show_transaction_contributions(year, month, filtered_txs):
+    st.write(f"### Open Transactions contributing to **{month} {year}**")
+    if filtered_txs.empty:
+        st.info("No contributing transactions found.")
+    else:
+        # Display the contribution summary by portfolio
+        portfolio_summary = filtered_txs.groupby("Portfolio")["BuyValue"].sum().reset_index()
+        portfolio_summary = portfolio_summary.rename(columns={"BuyValue": "Total Buy Value (INR)"})
+        
+        st.write("#### Contribution by Portfolio")
+        st.dataframe(
+            portfolio_summary,
+            column_config={
+                "Total Buy Value (INR)": st.column_config.NumberColumn(format="₹%.2f")
+            },
+            use_container_width=True
+        )
+        
+        st.write("#### Detailed Transactions")
+        # Format columns for display
+        display_cols = ["Symbol", "BuyDate", "Qty", "BuyAvg", "BuyValue", "Portfolio"]
+        available_cols = [c for c in display_cols if c in filtered_txs.columns]
+        
+        tx_display = filtered_txs[available_cols].copy()
+        if "BuyValue" in tx_display.columns:
+            tx_display["BuyValue"] = pd.to_numeric(tx_display["BuyValue"], errors="coerce").fillna(0.0)
+        if "BuyAvg" in tx_display.columns:
+            tx_display["BuyAvg"] = pd.to_numeric(tx_display["BuyAvg"], errors="coerce").fillna(0.0)
+            
+        st.dataframe(
+            tx_display,
+            column_config={
+                "BuyValue": st.column_config.NumberColumn(format="₹%.2f"),
+                "BuyAvg": st.column_config.NumberColumn(format="₹%.2f"),
+                "Qty": st.column_config.NumberColumn(format="%.4f")
+            },
+            use_container_width=True
+        )
+    
+    if st.button("Close"):
+        st.rerun()
+
+
 st.title("Performance Metric")
 
 # Custom styling for standard text/display alignment
@@ -81,6 +125,119 @@ with st.form("add_fy_form", clear_on_submit=True):
             if success:
                 st.success(f"Successfully added FY details for: '{fy_clean}'")
                 st.rerun()
+
+st.divider()
+
+# ==================== Monthly Buy Value of Open Transactions ====================
+st.subheader("Monthly Buy Value of Open Transactions (INR)")
+
+with st.spinner("Loading Transaction Details..."):
+    all_transactions = db.fetch_all_transactions()
+
+if all_transactions:
+    df_tx = pd.DataFrame(all_transactions)
+    # Check if necessary columns exist
+    if not df_tx.empty and "BuyDate" in df_tx.columns and "BuyValue" in df_tx.columns:
+        # Filter for open transactions (where SellDate is null/None/empty)
+        if "SellDate" in df_tx.columns:
+            open_tx = df_tx[
+                df_tx["SellDate"].isna() | 
+                (df_tx["SellDate"].astype(str).str.strip() == "") | 
+                (df_tx["SellDate"].astype(str).str.strip().str.lower() == "none") |
+                (df_tx["SellDate"].astype(str).str.strip().str.lower() == "nan")
+            ].copy()
+        else:
+            open_tx = df_tx.copy()
+        
+        # Filter out rows without a valid BuyDate
+        open_tx = open_tx[open_tx["BuyDate"].notna() & (open_tx["BuyDate"] != "")].copy()
+        
+        if not open_tx.empty:
+            open_tx["BuyDate_dt"] = pd.to_datetime(open_tx["BuyDate"], errors="coerce")
+            open_tx = open_tx[open_tx["BuyDate_dt"].notna()].copy()
+            
+            if not open_tx.empty:
+                open_tx["Year"] = open_tx["BuyDate_dt"].dt.year
+                open_tx["Month"] = open_tx["BuyDate_dt"].dt.strftime("%b")
+                open_tx["BuyValue"] = pd.to_numeric(open_tx["BuyValue"], errors="coerce").fillna(0.0)
+                
+                # Pivot table
+                pivot_df = open_tx.pivot_table(
+                    index="Year",
+                    columns="Month",
+                    values="BuyValue",
+                    aggfunc="sum",
+                    fill_value=0.0
+                )
+                
+                # Sort month columns in calendar order
+                months_ordered = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                pivot_df = pivot_df.reindex(columns=months_ordered, fill_value=0.0)
+                pivot_df = pivot_df.sort_index()
+                
+                # Add Total column
+                pivot_df["Total"] = pivot_df.sum(axis=1)
+                
+                # Add Total row
+                total_row = pivot_df.sum(axis=0)
+                pivot_df.loc["Total"] = total_row
+                
+                # Format Year index to string so Streamlit doesn't format it with commas
+                pivot_df.index = pivot_df.index.map(str)
+                
+                # Formatting for the number columns (e.g. ₹100,000.00)
+                col_config = {
+                    col: st.column_config.NumberColumn(
+                        label=col,
+                        format="₹%.2f"
+                    ) for col in pivot_df.columns
+                }
+                
+                # Session state tracking for active selection to prevent loop on dialog closing
+                if "active_selection" not in st.session_state:
+                    st.session_state["active_selection"] = None
+                
+                event = st.dataframe(
+                    pivot_df,
+                    column_config=col_config,
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode="single-cell",
+                    key="monthly_buy_dataframe"
+                )
+                
+                # Check selection state
+                selected_cells = event.selection.cells
+                
+                if selected_cells:
+                    if st.session_state["active_selection"] != selected_cells:
+                        st.session_state["active_selection"] = selected_cells
+                        
+                        row_idx, col_name = selected_cells[0]
+                        selected_year = pivot_df.index[row_idx]
+                        selected_month = col_name
+                        
+                        # Filter transactions based on selection
+                        filtered_tx = open_tx.copy()
+                        
+                        if selected_year != "Total":
+                            filtered_tx = filtered_tx[filtered_tx["Year"] == int(selected_year)]
+                            
+                        if selected_month != "Total":
+                            filtered_tx = filtered_tx[filtered_tx["Month"] == selected_month]
+                            
+                        # Trigger dialog popup
+                        show_transaction_contributions(selected_year, selected_month, filtered_tx)
+                else:
+                    st.session_state["active_selection"] = None
+            else:
+                st.info("No open transactions with valid Buy Dates found.")
+        else:
+            st.info("No open transactions found to display.")
+    else:
+        st.info("No transaction data available or missing required fields ('BuyDate', 'BuyValue').")
+else:
+    st.info("No transaction records found.")
 
 st.divider()
 
