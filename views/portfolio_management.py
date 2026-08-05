@@ -352,21 +352,20 @@ for i, port_name in enumerate(portfolio_names):
 
         # 3. Header
         st.subheader(f"Asset Allocation for {port_name}")
-        col1, col2, col3 = st.columns(3)
+
+        sip_months_key = f"sip_months_{port_name}"
+        if sip_months_key not in st.session_state:
+            st.session_state[sip_months_key] = 12
+
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("💰 Current Invested", f"₹{current_invested:,.2f}")
 
         expected_metric_placeholder = col2.empty()
         inflow_metric_placeholder   = col3.empty()
 
-        sip_months_key = f"sip_months_{port_name}"
-        if sip_months_key not in st.session_state:
-            st.session_state[sip_months_key] = 12
-
-        col_chk, col_pop, col_sip = st.columns([1, 1, 1])
-        with col_chk:
-            show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
-        with col_pop:
+        with col4:
+            sip_total_placeholder = st.empty()
             with st.popover("Change SIP Months"):
                 st.session_state[sip_months_key] = st.number_input(
                     "SIP Months", min_value=1,
@@ -374,10 +373,13 @@ for i, port_name in enumerate(portfolio_names):
                     key=f"input_{sip_months_key}"
                 )
 
-        sip_total_placeholder = col_sip.empty()
+        dynamic_sip_placeholder = col5.empty()
 
-        total_inflow      = 0
-        total_sip_amount  = 0
+        show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
+
+        total_inflow        = 0
+        total_sip_amount    = 0
+        total_remaining_sip = 0
 
         if not db_sectors:
             st.info("No sectors found!")
@@ -408,73 +410,84 @@ for i, port_name in enumerate(portfolio_names):
                 continue
 
             sector_expected = total_expected * (target_alloc / 100)
+            sector_stocks = [s for s in db_stocks if s.get("Sector") == sector_name]
+
+            rows = []
+
+            for p in sector_stocks:
+                sym     = p.get("Symbol")
+                name    = p.get("Name")
+                country = (p.get("Country") or "INDIA").upper()
+
+                alloc = float(port_stock_allocations.get(sym, 0.0))
+
+                agg      = tx_agg.get((port_name, sym), {"Qty": 0, "InvestedTotal": 0})
+                qty      = agg["Qty"]
+                invested = agg["InvestedTotal"]
+
+                # Fetch native price, then convert to INR for non-India stocks
+                if p.get("Equity", True):
+                    if p.get("Listed", True):
+                        native_price = get_stock_price(sym)
+                    else:
+                        native_price = float(p.get("LTP") or 0.0)
+                else:
+                    native_price = get_nav(nav_df, sym)
+
+                # Convert to INR — no-op (×1.0) for Indian stocks
+                price_inr = to_inr(native_price, country, currency_pairs_map, fx_rates)
+
+                # Asset target expected = Total × Sector % × Asset %
+                expected = total_expected * (target_alloc / 100) * (alloc / 100)
+                inflow   = max(0, expected - invested)
+
+                total_inflow += inflow
+
+                buy = math.ceil(inflow / price_inr) if price_inr > 0 else 0
+
+                sip_amount = expected / st.session_state[sip_months_key] if inflow > 0 else 0
+                total_sip_amount += sip_amount
+
+                remaining_sip = (expected - invested) / st.session_state[sip_months_key] if (expected - invested) > 0 else 0
+                total_remaining_sip += remaining_sip
+
+                project_alloc_pct = (expected / portfolio_expected_sum * 100) if portfolio_expected_sum > 0 else 0.0
+
+                rows.append({
+                    "Symbol":       sym,
+                    "Name":         name,
+                    "Country":      country,
+                    "LTP (INR)":    price_inr,
+                    "Qty":          qty,
+                    "Invested":     invested,
+                    "Allocation %": alloc,
+                    "Project Allocation %": project_alloc_pct,
+                    "Expected":     expected,
+                    "Inflow":       inflow,
+                    "SIP Amount":   sip_amount,
+                    "Dynamic SIP":  remaining_sip,
+                    "Buy":          buy,
+                })
+
+            df = pd.DataFrame(rows)
+            display_df = df[df["Inflow"] > 0] if show_only_inflow else df
+
+            # If show_only_inflow is active and no stock in this sector has inflow, hide the entire sector
+            if show_only_inflow and display_df.empty:
+                if not df.empty:
+                    updates = df[["Symbol", "Name", "Allocation %"]].rename(
+                        columns={"Allocation %": "Allocation"}
+                    )
+                    master_updates.extend(updates.to_dict("records"))
+                continue
 
             with st.expander(
                 f"📁 {sector_name} (Target Sector Allocation: {target_alloc}%) - Expected ₹{sector_expected:,.2f}",
                 expanded=True
             ):
-                sector_stocks = [s for s in db_stocks if s.get("Sector") == sector_name]
-
                 if not sector_stocks:
                     st.info("No assets in this sector")
                     continue
-
-                rows = []
-
-                for p in sector_stocks:
-                    sym     = p.get("Symbol")
-                    name    = p.get("Name")
-                    country = (p.get("Country") or "INDIA").upper()
-
-                    alloc = float(port_stock_allocations.get(sym, 0.0))
-
-                    agg      = tx_agg.get((port_name, sym), {"Qty": 0, "InvestedTotal": 0})
-                    qty      = agg["Qty"]
-                    invested = agg["InvestedTotal"]
-
-                    # Fetch native price, then convert to INR for non-India stocks
-                    if p.get("Equity", True):
-                        if p.get("Listed", True):
-                            native_price = get_stock_price(sym)
-                        else:
-                            native_price = float(p.get("LTP") or 0.0)
-                    else:
-                        native_price = get_nav(nav_df, sym)
-
-                    # Convert to INR — no-op (×1.0) for Indian stocks
-                    price_inr = to_inr(native_price, country, currency_pairs_map, fx_rates)
-
-                    # Asset target expected = Total × Sector % × Asset %
-                    expected = total_expected * (target_alloc / 100) * (alloc / 100)
-                    inflow   = max(0, expected - invested)
-
-                    total_inflow += inflow
-
-                    buy = math.ceil(inflow / price_inr) if price_inr > 0 else 0
-
-                    sip_amount = expected / st.session_state[sip_months_key] if expected > 0 else 0
-                    total_sip_amount += sip_amount
-
-                    project_alloc_pct = (expected / portfolio_expected_sum * 100) if portfolio_expected_sum > 0 else 0.0
-
-                    rows.append({
-                        "Symbol":       sym,
-                        "Name":         name,
-                        "Country":      country,
-                        "LTP (INR)":    price_inr,
-                        "Qty":          qty,
-                        "Invested":     invested,
-                        "Allocation %": alloc,
-                        "Project Allocation %": project_alloc_pct,
-                        "Expected":     expected,
-                        "Inflow":       inflow,
-                        "SIP Amount":   sip_amount,
-                        "Buy":          buy,
-                    })
-
-                df = pd.DataFrame(rows)
-
-                display_df = df[df["Inflow"] > 0] if show_only_inflow else df
 
                 if display_df.empty:
                     st.session_state[f"symbols_{port_name}_{sector_name}"] = []
@@ -513,10 +526,11 @@ for i, port_name in enumerate(portfolio_names):
                         "Expected":     st.column_config.NumberColumn("Expected",    format="₹%.2f"),
                         "Inflow":       st.column_config.NumberColumn("Inflow",      format="₹%.2f"),
                         "SIP Amount":   st.column_config.NumberColumn("SIP Amount",  format="₹%.2f"),
+                        "Dynamic SIP":  st.column_config.NumberColumn("Dynamic SIP", format="₹%.2f"),
                     },
                     disabled=[
                         "Symbol", "Name", "Country", "LTP (INR)",
-                        "Qty", "Invested", "Project Allocation %", "Expected", "Inflow", "SIP Amount", "Buy"
+                        "Qty", "Invested", "Project Allocation %", "Expected", "Inflow", "SIP Amount", "Dynamic SIP", "Buy"
                     ]
                 )
 
@@ -537,7 +551,8 @@ for i, port_name in enumerate(portfolio_names):
         displayed_expected_investment = current_invested + total_inflow
         expected_metric_placeholder.metric("🎯 Expected Investment", f"₹{displayed_expected_investment:,.2f}")
         inflow_metric_placeholder.metric("💵 Total Inflow",          f"₹{total_inflow:,.2f}")
-        sip_total_placeholder.metric("📊 Total SIP Amount",          f"₹{total_sip_amount:,.2f}")
+        sip_total_placeholder.metric("📊 Total SIP",                f"₹{total_sip_amount:,.2f}")
+        dynamic_sip_placeholder.metric("⏳ Dynamic SIP",            f"₹{total_remaining_sip:,.2f}")
 
         st.divider()
         submitted = st.button(
