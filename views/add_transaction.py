@@ -24,6 +24,7 @@ with st.spinner("Loading available assets & portfolios..."):
     db_investment_plan = db.fetch_investment_plan()
     open_transactions = db.fetch_open_transactions()
     db_allocations = db.fetch_allocations()
+    db_stock_allocations = db.fetch_stock_allocations()
     db_currency_pairs = db.fetch_currency_pairs()
     
 # Create a list of available portfolios
@@ -328,27 +329,34 @@ with container:
     col1, col2 = st.columns(2)
 
     with col1:
+        default_port = st.session_state.get("last_selected_portfolio")
+        port_index = 0
+        if default_port and default_port in available_portfolios:
+            port_index = available_portfolios.index(default_port)
+
         selected_portfolio = st.selectbox(
             "Portfolio", 
             options=available_portfolios,
+            index=port_index,
             help="Select the portfolio this transaction belongs to.",
             key=f"port_{st.session_state['tx_form_key']}"
         )
         
-        if selected_portfolio and db_allocations:
-            allocated_sectors = {
-                a.get("Sector") for a in db_allocations 
-                if a.get("Portfolio") == selected_portfolio and float(a.get("Allocation") or 0) > 0
+        if selected_portfolio:
+            allocated_symbols = {
+                a.get("Symbol") for a in (db_stock_allocations or [])
+                if a.get("Portfolio") == selected_portfolio and float(a.get("Allocation") or 0) > 0 and a.get("Symbol")
             }
-            symbols_in_portfolio = {
-                tx.get("Symbol") for tx in open_transactions 
-                if tx.get("Portfolio") == selected_portfolio
+            open_tx_symbols = {
+                tx.get("Symbol") for tx in (open_transactions or [])
+                if tx.get("Portfolio") == selected_portfolio and tx.get("Symbol")
             }
+            valid_symbols = allocated_symbols.union(open_tx_symbols)
             filtered_symbols = sorted([
-                p.get("Symbol", "") for p in db_stocks 
-                if p.get("Symbol", "") and (p.get("Sector") in allocated_sectors or p.get("Symbol") in symbols_in_portfolio)
+                s for s in available_symbols
+                if s in valid_symbols
             ])
-            options_to_show = filtered_symbols
+            options_to_show = filtered_symbols if filtered_symbols else available_symbols
         else:
             options_to_show = available_symbols
 
@@ -405,9 +413,10 @@ with container:
             key=qty_key
         )
         
+        default_date = st.session_state.get("last_transaction_date", datetime.date.today())
         transaction_date = st.date_input(
             "Transaction Date",
-            value=datetime.date.today(),
+            value=default_date,
             key=f"date_{st.session_state['tx_form_key']}"
         )
         
@@ -470,6 +479,8 @@ if submitted:
                 )
             
         if success:
+            st.session_state["last_selected_portfolio"] = selected_portfolio
+            st.session_state["last_transaction_date"] = transaction_date
             st.success(f"Successfully recorded {transaction_type} of {quantity} {selected_symbol} @ ₹{price}")
             time.sleep(1.5)
             st.session_state["tx_form_key"] += 1
