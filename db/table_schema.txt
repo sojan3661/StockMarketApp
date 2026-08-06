@@ -71,6 +71,7 @@ create table public."Investment Plan" (
   "Portfolio" text not null,
   "Description" text null,
   "Platform" text null,
+  "Target" double precision null,
   constraint Investment Plan_pkey primary key ("Portfolio")
 ) TABLESPACE pg_default;
 

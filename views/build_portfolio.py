@@ -29,11 +29,12 @@ with st.spinner("Loading investment plans..."):
     plans = db.fetch_investment_plan()
     
 # Convert to DataFrame for easier handling
+# Convert to DataFrame for easier handling
 if plans:
     plans_df = pd.DataFrame(plans)
 else:
     plans_df = pd.DataFrame(columns=[
-        "Portfolio", "Current Invested Amount", "Monthly SIP", "Number of Months", "Description", "Platform"
+        "Portfolio", "Current Invested Amount", "Monthly SIP", "Number of Months", "Description", "Platform", "Target"
     ])
 
 
@@ -53,7 +54,8 @@ with st.form("add_new_plan_form", clear_on_submit=True):
     col1, col2 = st.columns(2)
     with col1:
         new_invested = st.number_input("Current Invested Amount", min_value=0.0, step=0.01, value=0.0)
-        new_sip = st.number_input("Monthly SIP", min_value=0.0, step=0.01, value=0.0)
+        new_sip = st.number_input("Monthly SIP", min_value=0.0, step=0.01, value=0.0, help="Monthly SIP amount for the next n months")
+        new_target = st.number_input("Target Amount", min_value=0.0, step=0.01, value=0.0, help="Total amount targeted for this portfolio")
     with col2:
         new_months = st.number_input("Number of Months", min_value=0, step=1, value=0)
         new_desc = st.text_input("Description", placeholder="Optional notes about this portfolio")
@@ -73,7 +75,8 @@ with st.form("add_new_plan_form", clear_on_submit=True):
                 monthly_sip=new_sip if new_sip > 0 else None,
                 num_months=new_months if new_months > 0 else None,
                 description=new_desc.strip() if new_desc else None,
-                platform=new_platform.strip() if new_platform else None
+                platform=new_platform.strip() if new_platform else None,
+                target=new_target if new_target > 0 else None
             )
             if success:
                 st.success(f"Created {new_portfolio} successfully!")
@@ -102,20 +105,23 @@ else:
         months = int(row.get('Number of Months') or 0)
         expected_investment = inv_amt + (sip_amt * months)
         
+        target_amt = float(row.get('Target') or 0.0) if pd.notna(row.get('Target')) else 0.0
+        target_html = f'<span style="background-color: #8B5CF620; color: #A78BFA; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Target: ₹{target_amt:,.2f}</span>' if target_amt > 0 else ""
+        
         platform = row.get("Platform")
         platform_html = f'<span style="background-color: #F59E0B20; color: #FBBF24; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Platform: {platform}</span>' if pd.notna(platform) and platform else ""
         
         # UI Expanders for each plan to keep layout clean
         with st.expander(f"{port_id}", expanded=False):
-            st.markdown(
-                f"""
-                <div style="display: flex; gap: 15px; margin-bottom: 15px; color: #9CA3AF;">
-                    <span style="background-color: #3B82F620; color: #60A5FA; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Invested: ₹{inv_amt:,.2f}</span>
-                    <span style="background-color: #10B98120; color: #34D399; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Expected: ₹{expected_investment:,.2f}</span>
-                    {platform_html}
-                </div>
-                """, unsafe_allow_html=True
+            badges_html = (
+                f'<div style="display: flex; gap: 15px; margin-bottom: 15px; color: #9CA3AF; flex-wrap: wrap;">'
+                f'<span style="background-color: #3B82F620; color: #60A5FA; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Invested: ₹{inv_amt:,.2f}</span>'
+                f'<span style="background-color: #10B98120; color: #34D399; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Expected: ₹{expected_investment:,.2f}</span>'
+                f'{target_html}'
+                f'{platform_html}'
+                f'</div>'
             )
+            st.markdown(badges_html, unsafe_allow_html=True)
             # Using tabs to separate Edit and Delete actions
             tab_edit, tab_delete = st.tabs(["✏️ Edit Plan", "🗑️ Delete Plan"])
             
@@ -143,7 +149,16 @@ else:
                             value=float(row.get("Monthly SIP") or 0.0),
                             min_value=0.0,
                             step=0.01,
-                            key=f"edit_sip_{port_id}"
+                            key=f"edit_sip_{port_id}",
+                            help="Monthly SIP amount for the next n months"
+                        )
+                        edit_target = st.number_input(
+                            "Target Amount",
+                            value=float(row.get("Target") or 0.0) if pd.notna(row.get("Target")) else 0.0,
+                            min_value=0.0,
+                            step=0.01,
+                            key=f"edit_target_{port_id}",
+                            help="Total amount targeted for this portfolio"
                         )
                     with ec2:
                         edit_months = st.number_input(
@@ -181,7 +196,8 @@ else:
                                     monthly_sip=edit_sip if edit_sip > 0 else None,
                                     num_months=edit_months if edit_months > 0 else None,
                                     description=edit_desc if edit_desc else None,
-                                    platform=edit_platform if edit_platform else None
+                                    platform=edit_platform if edit_platform else None,
+                                    target=edit_target if edit_target > 0 else None
                                 )
                                 if success:
                                     st.success(msg)
@@ -195,7 +211,8 @@ else:
                                     monthly_sip=edit_sip if edit_sip > 0 else None,
                                     num_months=edit_months if edit_months > 0 else None,
                                     description=edit_desc if edit_desc else None,
-                                    platform=edit_platform if edit_platform else None
+                                    platform=edit_platform if edit_platform else None,
+                                    target=edit_target if edit_target > 0 else None
                                 )
                                 if success:
                                     st.success(f"Updated {port_id} successfully!")
