@@ -937,7 +937,7 @@ class SupabaseClient:
             st.error(f"Error fetching investment plans: {e}")
             return []
 
-    def upsert_investment_plan(self, portfolio, current_invested, monthly_sip, num_months, description, platform=None):
+    def upsert_investment_plan(self, portfolio, current_invested, monthly_sip, num_months, description, platform=None, target=None):
         """Upserts an investment plan. Primary key is Portfolio."""
         headers = self._get_headers()
         if not headers:
@@ -952,7 +952,8 @@ class SupabaseClient:
             "Monthly SIP": monthly_sip,
             "Number of Months": num_months,
             "Description": description,
-            "Platform": platform
+            "Platform": platform,
+            "Target": target
         }
         
         try:
@@ -969,7 +970,7 @@ class SupabaseClient:
             st.error(f"Error saving investment plan: {e}")
             return False
 
-    def update_portfolio_name(self, old_name, new_name, current_invested, monthly_sip, num_months, description, platform=None):
+    def update_portfolio_name(self, old_name, new_name, current_invested, monthly_sip, num_months, description, platform=None, target=None):
         """
         Renames a portfolio by:
         1. Creating a new investment plan record
@@ -988,7 +989,8 @@ class SupabaseClient:
             monthly_sip=monthly_sip,
             num_months=num_months,
             description=description,
-            platform=platform
+            platform=platform,
+            target=target
         )
         if not insert_success:
             return False, f"Failed to create new investment plan '{new_name}'"

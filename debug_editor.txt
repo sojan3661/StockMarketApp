@@ -2272,3 +2272,112 @@ Key: editor_US_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_ro
 Key: editor_Baby Planning_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
 Key: editor_Baby Planning_ETF/ INDEX FUND, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
 --- RERUN ---
+--- RERUN ---
+Key: editor_Yearly Expenses_GOLD & SILVER, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_MONOPOLY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_HEALTHCARE & PHARMA, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_COMMUNICATION SERVICES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_RECYCLING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Trading Support_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_INFORMATION TECHNOLOGY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_Aerospace & Defense, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Yearly Expenses_ETF/ INDEX FUND, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_Aerospace & Defense, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_CHEMICALS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_HEALTHCARE & PHARMA, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_EXCHANGE & STOCKBROKING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_BATTERIES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Baby Planning_ETF/ INDEX FUND, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_COMMUNICATION SERVICES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Yearly Expenses_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_Fintech, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_INSURANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AUTO ANCILLARY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_INFRASTRUCTURE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_RETAIL, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_GOLD & SILVER_GOLD & SILVER, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_EXCHANGE & STOCKBROKING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Baby Planning_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AUTOMOBILE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AMC, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_INFRASTRUCTURE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Emergency Fund_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_EMS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_SEMICONDUCTORS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+--- RERUN ---
+--- RERUN ---
+Key: editor_Yearly Expenses_GOLD & SILVER, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_MONOPOLY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_INFORMATION TECHNOLOGY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_HEALTHCARE & PHARMA, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_RECYCLING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Trading Support_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Yearly Expenses_ETF/ INDEX FUND, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_Aerospace & Defense, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_CHEMICALS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_COMMUNICATION SERVICES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_HEALTHCARE & PHARMA, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_EXCHANGE & STOCKBROKING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_BATTERIES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Baby Planning_ETF/ INDEX FUND, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Yearly Expenses_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_SEMICONDUCTORS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_Fintech, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_INSURANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AUTO ANCILLARY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_INFRASTRUCTURE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_RETAIL, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_GOLD & SILVER_GOLD & SILVER, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_Aerospace & Defense, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_EXCHANGE & STOCKBROKING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Baby Planning_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AUTOMOBILE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AMC, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_INFRASTRUCTURE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_COMMUNICATION SERVICES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Emergency Fund_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_EMS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+--- RERUN ---
+Key: editor_Yearly Expenses_GOLD & SILVER, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_MONOPOLY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_INFORMATION TECHNOLOGY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_HEALTHCARE & PHARMA, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_RECYCLING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Trading Support_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Yearly Expenses_ETF/ INDEX FUND, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_Aerospace & Defense, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_CHEMICALS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_COMMUNICATION SERVICES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_HEALTHCARE & PHARMA, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_EXCHANGE & STOCKBROKING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_BATTERIES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Baby Planning_ETF/ INDEX FUND, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Yearly Expenses_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_SEMICONDUCTORS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_Fintech, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_INSURANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AUTO ANCILLARY, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_INFRASTRUCTURE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_RETAIL, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_FINANCE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_GOLD & SILVER_GOLD & SILVER, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_Aerospace & Defense, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_EXCHANGE & STOCKBROKING, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Baby Planning_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AUTOMOBILE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_AMC, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Home_INFRASTRUCTURE, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_US_COMMUNICATION SERVICES, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Emergency Fund_DEBT, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
+Key: editor_Core Portfolio_EMS, Value: {'edited_rows': {}, 'added_rows': [], 'deleted_rows': []}
