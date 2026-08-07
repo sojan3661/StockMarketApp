@@ -307,8 +307,8 @@ for tx in open_tx:
     buy_usd = float(tx.get("BuyValueUSD", 0) or 0) # USD total for this transaction
     buy_avg = float(tx.get("BuyAvg", 0))
 
-    tx_agg[key]["Qty"] += qty
     if is_open:
+        tx_agg[key]["Qty"] += qty
         # Use BuyValue directly if available, else fall back to qty * BuyAvg
         tx_agg[key]["InvestedTotal"]    += buy_val if buy_val > 0 else qty * buy_avg
         tx_agg[key]["InvestedTotalUSD"] += buy_usd
@@ -348,15 +348,24 @@ def build_portfolio_df(port_name):
     }
 
     alloc_map = {
-        a["Symbol"]: a["Allocation"]
+        a["Symbol"]: float(a.get("Allocation", 0) or 0)
         for a in db_stock_allocs
         if a.get("Portfolio") == port_name
         and a.get("Symbol")
-        and (a.get("Allocation") or 0) > 0
     }
 
-    rows = []
+    all_syms = set()
     for sym, target_alloc in alloc_map.items():
+        if target_alloc > 0:
+            all_syms.add(sym)
+
+    for (p, sym), agg in tx_agg.items():
+        if p == port_name and (agg.get("Qty", 0) > 0 or agg.get("InvestedTotal", 0) > 0):
+            all_syms.add(sym)
+
+    rows = []
+    for sym in sorted(all_syms):
+        target_alloc = alloc_map.get(sym, 0.0)
         stock_info  = stocks_map.get(sym, {})
         sector      = stock_info.get("Sector", "Unknown")
         name        = stock_info.get("Name", sym)
@@ -456,13 +465,15 @@ def sector_invested_df(port_name=None):
     data = {}
     ports = [port_name] if port_name else portfolio_names
     for port in ports:
-        alloc_syms = {
-            a["Symbol"]
-            for a in db_stock_allocs
-            if a.get("Portfolio") == port
-            and a.get("Symbol")
-            and (a.get("Allocation") or 0) > 0
-        }
+        alloc_syms = set()
+        for a in db_stock_allocs:
+            if a.get("Portfolio") == port and a.get("Symbol"):
+                if float(a.get("Allocation", 0) or 0) > 0:
+                    alloc_syms.add(a["Symbol"])
+        for (p, sym), agg in tx_agg.items():
+            if p == port and (agg.get("Qty", 0) > 0 or agg.get("InvestedTotal", 0) > 0):
+                alloc_syms.add(sym)
+
         for sym in alloc_syms:
             stock_info = stocks_map.get(sym, {})
             sector     = stock_info.get("Sector", "Unknown")
