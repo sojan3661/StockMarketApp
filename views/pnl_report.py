@@ -14,9 +14,12 @@ if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.stop()
 
+@st.cache_data(ttl=300)
+def load_pnl_db_data():
+    return db.fetch_all_transactions(), db.fetch_investment_plan()
+
 with st.spinner("Crunching transaction history..."):
-    all_transactions = db.fetch_all_transactions()
-    db_plans = db.fetch_investment_plan()
+    all_transactions, db_plans = load_pnl_db_data()
 
 # Choose portfolio
 if not db_plans:

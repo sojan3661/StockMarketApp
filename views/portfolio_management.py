@@ -57,6 +57,8 @@ def load_nav_data():
         return pd.DataFrame()
 
 
+from concurrent.futures import ThreadPoolExecutor
+
 # -----------------------------
 # Cache NSE / Yahoo Price
 # -----------------------------
@@ -65,7 +67,7 @@ def get_stock_price(symbol):
     """Returns native price (in the stock's home currency)."""
     price = 0.0
 
-    if yf:
+    if yf and symbol:
         for suffix in [".NS", ".BO", ""]:
             try:
                 ticker = yf.Ticker(symbol + suffix)
@@ -76,6 +78,15 @@ def get_stock_price(symbol):
                 continue
 
     return price
+
+
+def batch_fetch_stock_prices(symbols):
+    """Pre-fetch stock prices for multiple symbols in parallel using ThreadPoolExecutor."""
+    unique_syms = [s for s in set(symbols) if s]
+    if not unique_syms or not yf:
+        return
+    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
+        list(executor.map(get_stock_price, unique_syms))
 
 
 # -----------------------------
@@ -113,11 +124,16 @@ def fetch_fx_rate(pair_symbol):
 
 @st.cache_data(ttl=300)
 def build_fx_cache(cp_tuples):
-    """Pre-fetch all FX rates from CurrencyPair table symbols."""
+    """Pre-fetch all FX rates from CurrencyPair table symbols in parallel."""
     rates = {}
-    for _country, sym in cp_tuples:
-        if sym and sym not in rates:
-            rates[sym] = fetch_fx_rate(sym)
+    symbols_to_fetch = list({sym for _country, sym in cp_tuples if sym})
+    if not symbols_to_fetch:
+        return rates
+
+    with ThreadPoolExecutor(max_workers=min(10, len(symbols_to_fetch))) as executor:
+        fetched_rates = list(executor.map(fetch_fx_rate, symbols_to_fetch))
+        for sym, rate in zip(symbols_to_fetch, fetched_rates):
+            rates[sym] = rate
     return rates
 
 
@@ -223,6 +239,13 @@ def load_portfolio_data():
 ) = load_portfolio_data()
 
 nav_df = load_nav_data()
+
+# Parallel pre-fetch stock prices for all listed stocks
+all_equity_symbols = [
+    s.get("Symbol") for s in db_stocks
+    if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
+]
+batch_fetch_stock_prices(all_equity_symbols)
 
 # Build currency pair lookup: country (uppercase) -> CurrencyPair row
 currency_pairs_map = {
@@ -357,7 +380,7 @@ for i, port_name in enumerate(portfolio_names):
         if sip_months_key not in st.session_state:
             st.session_state[sip_months_key] = 12
 
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("💰 Current Invested", f"₹{current_invested:,.2f}")
 
@@ -373,13 +396,10 @@ for i, port_name in enumerate(portfolio_names):
                     key=f"input_{sip_months_key}"
                 )
 
-        dynamic_sip_placeholder = col5.empty()
-
         show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
 
-        total_inflow        = 0
-        total_sip_amount    = 0
-        total_remaining_sip = 0
+        total_inflow = 0
+        total_sip    = 0
 
         if not db_sectors:
             st.info("No sectors found!")
@@ -445,11 +465,8 @@ for i, port_name in enumerate(portfolio_names):
 
                 buy = math.ceil(inflow / price_inr) if price_inr > 0 else 0
 
-                sip_amount = expected / st.session_state[sip_months_key] if inflow > 0 else 0
-                total_sip_amount += sip_amount
-
-                remaining_sip = (expected - invested) / st.session_state[sip_months_key] if (expected - invested) > 0 else 0
-                total_remaining_sip += remaining_sip
+                sip = inflow / st.session_state[sip_months_key] if inflow > 0 else 0
+                total_sip += sip
 
                 project_alloc_pct = (expected / portfolio_expected_sum * 100) if portfolio_expected_sum > 0 else 0.0
 
@@ -464,8 +481,7 @@ for i, port_name in enumerate(portfolio_names):
                     "Project Allocation %": project_alloc_pct,
                     "Expected":     expected,
                     "Inflow":       inflow,
-                    "SIP Amount":   sip_amount,
-                    "Dynamic SIP":  remaining_sip,
+                    "SIP":          sip,
                     "Buy":          buy,
                 })
 
@@ -525,12 +541,11 @@ for i, port_name in enumerate(portfolio_names):
                         "Invested":     st.column_config.NumberColumn("Invested",    format="₹%.2f"),
                         "Expected":     st.column_config.NumberColumn("Expected",    format="₹%.2f"),
                         "Inflow":       st.column_config.NumberColumn("Inflow",      format="₹%.2f"),
-                        "SIP Amount":   st.column_config.NumberColumn("SIP Amount",  format="₹%.2f"),
-                        "Dynamic SIP":  st.column_config.NumberColumn("Dynamic SIP", format="₹%.2f"),
+                        "SIP":          st.column_config.NumberColumn("SIP",         format="₹%.2f"),
                     },
                     disabled=[
                         "Symbol", "Name", "Country", "LTP (INR)",
-                        "Qty", "Invested", "Project Allocation %", "Expected", "Inflow", "SIP Amount", "Dynamic SIP", "Buy"
+                        "Qty", "Invested", "Project Allocation %", "Expected", "Inflow", "SIP", "Buy"
                     ]
                 )
 
@@ -551,8 +566,7 @@ for i, port_name in enumerate(portfolio_names):
         displayed_expected_investment = current_invested + total_inflow
         expected_metric_placeholder.metric("🎯 Expected Investment", f"₹{displayed_expected_investment:,.2f}")
         inflow_metric_placeholder.metric("💵 Total Inflow",          f"₹{total_inflow:,.2f}")
-        sip_total_placeholder.metric("📊 Total SIP",                f"₹{total_sip_amount:,.2f}")
-        dynamic_sip_placeholder.metric("⏳ Dynamic SIP",            f"₹{total_remaining_sip:,.2f}")
+        sip_total_placeholder.metric("📊 Total SIP",                f"₹{total_sip:,.2f}")
 
         st.divider()
         submitted = st.button(

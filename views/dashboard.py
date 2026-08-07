@@ -114,6 +114,17 @@ def get_stock_info(symbol):
     return price or 0.0, pe
 
 
+from concurrent.futures import ThreadPoolExecutor
+
+def batch_fetch_stock_info(symbols):
+    """Pre-fetch stock info for multiple symbols in parallel using ThreadPoolExecutor."""
+    unique_syms = [s for s in set(symbols) if s]
+    if not unique_syms or not yf:
+        return
+    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
+        list(executor.map(get_stock_info, unique_syms))
+
+
 @st.cache_data(ttl=300)
 def fetch_fx_rate(pair_symbol):
     """
@@ -164,14 +175,34 @@ def get_index_pe(index_name):
 # -----------------------------------------------
 # Load data
 # -----------------------------------------------
+@st.cache_data(ttl=300)
+def load_dashboard_db_data():
+    return (
+        db.fetch_stocks(),
+        db.fetch_open_transactions(),
+        db.fetch_stock_allocations(),
+        db.fetch_allocations(),
+        db.fetch_investment_plan(),
+        db.fetch_currency_pairs()
+    )
+
 with st.spinner("Loading dashboard data..."):
-    db_stocks         = db.fetch_stocks()
-    open_tx           = db.fetch_open_transactions()
-    db_stock_allocs   = db.fetch_stock_allocations()
-    db_sector_allocs  = db.fetch_allocations()
-    db_plans          = db.fetch_investment_plan()
-    db_currency_pairs = db.fetch_currency_pairs()   # list of CurrencyPair rows
-    nav_df            = load_nav_data()
+    (
+        db_stocks,
+        open_tx,
+        db_stock_allocs,
+        db_sector_allocs,
+        db_plans,
+        db_currency_pairs
+    ) = load_dashboard_db_data()
+    nav_df = load_nav_data()
+
+    # Parallel pre-fetch all stock prices concurrently
+    all_equity_symbols = [
+        s.get("Symbol") for s in db_stocks
+        if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
+    ]
+    batch_fetch_stock_info(all_equity_symbols)
 
 plans_list      = db_plans if isinstance(db_plans, list) else ([db_plans] if db_plans else [])
 portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
@@ -192,9 +223,14 @@ currency_pairs_map = {
 def build_fx_cache(cp_tuples):
     """cp_tuples: tuple of (country, symbol) pairs (hashable for caching)."""
     rates = {}
-    for _country, sym in cp_tuples:
-        if sym and sym not in rates:
-            rates[sym] = fetch_fx_rate(sym)
+    symbols_to_fetch = list({sym for _country, sym in cp_tuples if sym})
+    if not symbols_to_fetch:
+        return rates
+
+    with ThreadPoolExecutor(max_workers=min(10, len(symbols_to_fetch))) as executor:
+        fetched_rates = list(executor.map(fetch_fx_rate, symbols_to_fetch))
+        for sym, rate in zip(symbols_to_fetch, fetched_rates):
+            rates[sym] = rate
     return rates
 
 _cp_tuples = tuple(sorted(
@@ -307,8 +343,8 @@ for tx in open_tx:
     buy_usd = float(tx.get("BuyValueUSD", 0) or 0) # USD total for this transaction
     buy_avg = float(tx.get("BuyAvg", 0))
 
-    tx_agg[key]["Qty"] += qty
     if is_open:
+        tx_agg[key]["Qty"] += qty
         # Use BuyValue directly if available, else fall back to qty * BuyAvg
         tx_agg[key]["InvestedTotal"]    += buy_val if buy_val > 0 else qty * buy_avg
         tx_agg[key]["InvestedTotalUSD"] += buy_usd
@@ -348,15 +384,24 @@ def build_portfolio_df(port_name):
     }
 
     alloc_map = {
-        a["Symbol"]: a["Allocation"]
+        a["Symbol"]: float(a.get("Allocation", 0) or 0)
         for a in db_stock_allocs
         if a.get("Portfolio") == port_name
         and a.get("Symbol")
-        and (a.get("Allocation") or 0) > 0
     }
 
-    rows = []
+    all_syms = set()
     for sym, target_alloc in alloc_map.items():
+        if target_alloc > 0:
+            all_syms.add(sym)
+
+    for (p, sym), agg in tx_agg.items():
+        if p == port_name and (agg.get("Qty", 0) > 0 or agg.get("InvestedTotal", 0) > 0):
+            all_syms.add(sym)
+
+    rows = []
+    for sym in sorted(all_syms):
+        target_alloc = alloc_map.get(sym, 0.0)
         stock_info  = stocks_map.get(sym, {})
         sector      = stock_info.get("Sector", "Unknown")
         name        = stock_info.get("Name", sym)
@@ -411,41 +456,84 @@ def build_investment_bar_df(port_names_filter=None):
 
 
 def render_investment_bar(bar_df):
-    """Render a grouped bar chart of Current Invested vs Expected Investment (always INR)."""
+    """Render Current Invested vs Expected Investment visualization with toggle (Bar Chart vs Portfolio Allocation Pie Chart)."""
     if bar_df.empty:
         return
-    st.subheader("Current Invested vs Expected Investment")
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="Current Invested",
-        x=bar_df["Portfolio"],
-        y=bar_df["Current Invested"],
-        marker_color="#4C78A8",
-        text=bar_df["Current Invested"].apply(lambda v: f"₹{v:,.0f}"),
-        textposition="outside"
-    ))
-    fig.add_trace(go.Bar(
-        name="Expected Investment",
-        x=bar_df["Portfolio"],
-        y=bar_df["Expected Investment"],
-        marker_color="#F58518",
-        text=bar_df["Expected Investment"].apply(lambda v: f"₹{v:,.0f}"),
-        textposition="outside"
-    ))
-    fig.update_layout(
-        barmode="group",
-        yaxis_title="Amount (₹)",
-        xaxis_title="Portfolio",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E2E8F0")),
-        margin=dict(t=60, b=40),
-        height=420,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color="#E2E8F0"),
-        xaxis=dict(gridcolor="#2D333B"),
-        yaxis=dict(gridcolor="#2D333B")
-    )
-    st.plotly_chart(fig, use_container_width=True)
+
+    col_title, col_toggle = st.columns([6, 4])
+
+    with col_toggle:
+        st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
+        show_pie = st.toggle("Portfolio Allocation", value=False, key="overall_investment_pie_toggle")
+
+    with col_title:
+        if show_pie:
+            st.subheader("Portfolio Allocation")
+        else:
+            st.subheader("Current Invested vs Expected Investment")
+
+    if not show_pie:
+        # Bar Chart: Current Invested vs Expected Investment
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            name="Current Invested",
+            x=bar_df["Portfolio"],
+            y=bar_df["Current Invested"],
+            marker_color="#4C78A8",
+            text=bar_df["Current Invested"].apply(lambda v: f"₹{v:,.0f}"),
+            textposition="outside"
+        ))
+        fig.add_trace(go.Bar(
+            name="Expected Investment",
+            x=bar_df["Portfolio"],
+            y=bar_df["Expected Investment"],
+            marker_color="#F58518",
+            text=bar_df["Expected Investment"].apply(lambda v: f"₹{v:,.0f}"),
+            textposition="outside"
+        ))
+        fig.update_layout(
+            barmode="group",
+            yaxis_title="Amount (₹)",
+            xaxis_title="Portfolio",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E2E8F0")),
+            margin=dict(t=60, b=40),
+            height=420,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="#E2E8F0"),
+            xaxis=dict(gridcolor="#2D333B"),
+            yaxis=dict(gridcolor="#2D333B")
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        # Pie chart mode: show portfolio allocation
+        alloc_metric = st.toggle("Show by Expected Investment (default: Current Invested)", value=False, key="overall_pie_alloc_toggle")
+
+        pie_val_col = "Expected Investment" if alloc_metric else "Current Invested"
+        pie_data = bar_df[bar_df[pie_val_col] > 0]
+
+        if pie_data.empty:
+            st.info(f"No {pie_val_col} data available for portfolio pie chart.")
+        else:
+            fig_p = go.Figure(go.Pie(
+                labels=pie_data["Portfolio"].tolist(),
+                values=pie_data[pie_val_col].tolist(),
+                hole=0.4,
+                marker_colors=px.colors.qualitative.Pastel,
+                textinfo="label+percent",
+                textposition="inside",
+            ))
+            fig_p.update_layout(
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5, font=dict(color="#E2E8F0")),
+                margin=dict(t=30, b=60, l=0, r=0),
+                height=420,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#E2E8F0")
+            )
+            st.plotly_chart(fig_p, use_container_width=True)
 
 
 def sector_invested_df(port_name=None):
@@ -456,13 +544,15 @@ def sector_invested_df(port_name=None):
     data = {}
     ports = [port_name] if port_name else portfolio_names
     for port in ports:
-        alloc_syms = {
-            a["Symbol"]
-            for a in db_stock_allocs
-            if a.get("Portfolio") == port
-            and a.get("Symbol")
-            and (a.get("Allocation") or 0) > 0
-        }
+        alloc_syms = set()
+        for a in db_stock_allocs:
+            if a.get("Portfolio") == port and a.get("Symbol"):
+                if float(a.get("Allocation", 0) or 0) > 0:
+                    alloc_syms.add(a["Symbol"])
+        for (p, sym), agg in tx_agg.items():
+            if p == port and (agg.get("Qty", 0) > 0 or agg.get("InvestedTotal", 0) > 0):
+                alloc_syms.add(sym)
+
         for sym in alloc_syms:
             stock_info = stocks_map.get(sym, {})
             sector     = stock_info.get("Sector", "Unknown")
@@ -806,6 +896,6 @@ for i, port_name in enumerate(portfolio_names):
             st.info(f"No invested data found for **{port_name}**.")
         else:
             render_summary_and_pie(port_df, port_sec_df, port_name,
-                                   bar_df=port_bar_df,
+                                   bar_df=None,
                                    metric_expected=port_expected,
                                    total_expected=port_expected)
