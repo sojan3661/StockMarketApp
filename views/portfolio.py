@@ -57,28 +57,43 @@ def get_nav(nav_df, fund_name):
 
     return None
 
+from concurrent.futures import ThreadPoolExecutor
+
 # -----------------------------------------------
 # Stock price helper
 # -----------------------------------------------
+@st.cache_data(ttl=600)
 def get_stock_info(symbol):
     price = None
     pe = None
 
-    if yf:
+    if yf and symbol:
         for suffix in [".NS", ".BO", ""]:
             try:
                 ticker = yf.Ticker(symbol + suffix)
                 p = ticker.fast_info.last_price
                 if p and p > 0:
                     price = float(p)
-                    pe_raw = ticker.info.get("trailingPE")
-                    if pe_raw is not None:
-                        pe = float(pe_raw)
+                    try:
+                        pe_raw = ticker.info.get("trailingPE")
+                        if pe_raw is not None:
+                            pe = float(pe_raw)
+                    except Exception:
+                        pass
                     return price, pe
             except Exception:
                 continue
 
     return price, pe
+
+
+def batch_fetch_stock_info(symbols):
+    """Pre-fetch stock info for multiple symbols in parallel using ThreadPoolExecutor."""
+    unique_syms = [s for s in set(symbols) if s]
+    if not unique_syms or not yf:
+        return
+    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
+        list(executor.map(get_stock_info, unique_syms))
 
 # -----------------------------------------------
 # FX helpers (same logic as Dashboard.py)
@@ -112,11 +127,16 @@ def fetch_fx_rate(pair_symbol):
 
 @st.cache_data(ttl=300)
 def build_fx_cache(cp_tuples):
-    """Pre-fetch all FX rates from CurrencyPair table symbols."""
+    """Pre-fetch all FX rates from CurrencyPair table symbols in parallel."""
     rates = {}
-    for _country, sym in cp_tuples:
-        if sym and sym not in rates:
-            rates[sym] = fetch_fx_rate(sym)
+    symbols_to_fetch = list({sym for _country, sym in cp_tuples if sym})
+    if not symbols_to_fetch:
+        return rates
+
+    with ThreadPoolExecutor(max_workers=min(10, len(symbols_to_fetch))) as executor:
+        fetched_rates = list(executor.map(fetch_fx_rate, symbols_to_fetch))
+        for sym, rate in zip(symbols_to_fetch, fetched_rates):
+            rates[sym] = rate
     return rates
 
 
@@ -214,14 +234,34 @@ if not db.is_configured():
 # -----------------------------------------------
 # Load data
 # -----------------------------------------------
+@st.cache_data(ttl=300)
+def load_portfolio_db_data():
+    return (
+        db.fetch_stocks(),
+        db.fetch_open_transactions(),
+        db.fetch_stock_allocations(),
+        db.fetch_allocations(),
+        db.fetch_investment_plan(),
+        db.fetch_currency_pairs()
+    )
+
 with st.spinner("Loading portfolio data and live market prices..."):
-    db_stocks            = db.fetch_stocks()
-    open_transactions    = db.fetch_open_transactions()
-    nav_df               = load_nav_data()
-    db_stock_allocations = db.fetch_stock_allocations()
-    db_sector_allocations= db.fetch_allocations()
-    db_investment_plan   = db.fetch_investment_plan()
-    db_currency_pairs    = db.fetch_currency_pairs()
+    (
+        db_stocks,
+        open_transactions,
+        db_stock_allocations,
+        db_sector_allocations,
+        db_investment_plan,
+        db_currency_pairs
+    ) = load_portfolio_db_data()
+    nav_df = load_nav_data()
+
+    # Parallel pre-fetch all stock prices concurrently
+    all_equity_symbols = [
+        s.get("Symbol") for s in db_stocks
+        if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
+    ]
+    batch_fetch_stock_info(all_equity_symbols)
 
 # Build currency maps
 currency_pairs_map = {

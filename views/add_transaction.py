@@ -19,13 +19,26 @@ if not db.is_configured():
     st.info("Please set your credentials directly inside the init method of `Config/supabase_client.py`.")
     st.stop()
     
+@st.cache_data(ttl=300)
+def load_add_tx_db_data():
+    return (
+        db.fetch_stocks(),
+        db.fetch_investment_plan(),
+        db.fetch_open_transactions(),
+        db.fetch_allocations(),
+        db.fetch_stock_allocations(),
+        db.fetch_currency_pairs()
+    )
+
 with st.spinner("Loading available assets & portfolios..."):
-    db_stocks = db.fetch_stocks()
-    db_investment_plan = db.fetch_investment_plan()
-    open_transactions = db.fetch_open_transactions()
-    db_allocations = db.fetch_allocations()
-    db_stock_allocations = db.fetch_stock_allocations()
-    db_currency_pairs = db.fetch_currency_pairs()
+    (
+        db_stocks,
+        db_investment_plan,
+        open_transactions,
+        db_allocations,
+        db_stock_allocations,
+        db_currency_pairs
+    ) = load_add_tx_db_data()
     
 # Create a list of available portfolios
 if not db_investment_plan:

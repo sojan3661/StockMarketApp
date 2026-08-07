@@ -57,6 +57,8 @@ def load_nav_data():
         return pd.DataFrame()
 
 
+from concurrent.futures import ThreadPoolExecutor
+
 # -----------------------------
 # Cache NSE / Yahoo Price
 # -----------------------------
@@ -65,7 +67,7 @@ def get_stock_price(symbol):
     """Returns native price (in the stock's home currency)."""
     price = 0.0
 
-    if yf:
+    if yf and symbol:
         for suffix in [".NS", ".BO", ""]:
             try:
                 ticker = yf.Ticker(symbol + suffix)
@@ -76,6 +78,15 @@ def get_stock_price(symbol):
                 continue
 
     return price
+
+
+def batch_fetch_stock_prices(symbols):
+    """Pre-fetch stock prices for multiple symbols in parallel using ThreadPoolExecutor."""
+    unique_syms = [s for s in set(symbols) if s]
+    if not unique_syms or not yf:
+        return
+    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
+        list(executor.map(get_stock_price, unique_syms))
 
 
 # -----------------------------
@@ -113,11 +124,16 @@ def fetch_fx_rate(pair_symbol):
 
 @st.cache_data(ttl=300)
 def build_fx_cache(cp_tuples):
-    """Pre-fetch all FX rates from CurrencyPair table symbols."""
+    """Pre-fetch all FX rates from CurrencyPair table symbols in parallel."""
     rates = {}
-    for _country, sym in cp_tuples:
-        if sym and sym not in rates:
-            rates[sym] = fetch_fx_rate(sym)
+    symbols_to_fetch = list({sym for _country, sym in cp_tuples if sym})
+    if not symbols_to_fetch:
+        return rates
+
+    with ThreadPoolExecutor(max_workers=min(10, len(symbols_to_fetch))) as executor:
+        fetched_rates = list(executor.map(fetch_fx_rate, symbols_to_fetch))
+        for sym, rate in zip(symbols_to_fetch, fetched_rates):
+            rates[sym] = rate
     return rates
 
 
@@ -223,6 +239,13 @@ def load_portfolio_data():
 ) = load_portfolio_data()
 
 nav_df = load_nav_data()
+
+# Parallel pre-fetch stock prices for all listed stocks
+all_equity_symbols = [
+    s.get("Symbol") for s in db_stocks
+    if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
+]
+batch_fetch_stock_prices(all_equity_symbols)
 
 # Build currency pair lookup: country (uppercase) -> CurrencyPair row
 currency_pairs_map = {

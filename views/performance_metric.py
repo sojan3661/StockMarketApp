@@ -82,8 +82,12 @@ if not db.is_configured():
     st.info("Please set your credentials directly inside the init method of `Config/supabase_client.py`.")
     st.stop()
 
+@st.cache_data(ttl=300)
+def load_perf_db_data():
+    return db.fetch_fy_details()
+
 with st.spinner("Loading FY Details..."):
-    fy_data = db.fetch_fy_details()
+    fy_data = load_perf_db_data()
 
 existing_fys = [str(item.get("FY", "")).strip() for item in fy_data]
 

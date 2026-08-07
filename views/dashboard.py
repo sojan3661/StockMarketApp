@@ -114,6 +114,17 @@ def get_stock_info(symbol):
     return price or 0.0, pe
 
 
+from concurrent.futures import ThreadPoolExecutor
+
+def batch_fetch_stock_info(symbols):
+    """Pre-fetch stock info for multiple symbols in parallel using ThreadPoolExecutor."""
+    unique_syms = [s for s in set(symbols) if s]
+    if not unique_syms or not yf:
+        return
+    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
+        list(executor.map(get_stock_info, unique_syms))
+
+
 @st.cache_data(ttl=300)
 def fetch_fx_rate(pair_symbol):
     """
@@ -164,14 +175,34 @@ def get_index_pe(index_name):
 # -----------------------------------------------
 # Load data
 # -----------------------------------------------
+@st.cache_data(ttl=300)
+def load_dashboard_db_data():
+    return (
+        db.fetch_stocks(),
+        db.fetch_open_transactions(),
+        db.fetch_stock_allocations(),
+        db.fetch_allocations(),
+        db.fetch_investment_plan(),
+        db.fetch_currency_pairs()
+    )
+
 with st.spinner("Loading dashboard data..."):
-    db_stocks         = db.fetch_stocks()
-    open_tx           = db.fetch_open_transactions()
-    db_stock_allocs   = db.fetch_stock_allocations()
-    db_sector_allocs  = db.fetch_allocations()
-    db_plans          = db.fetch_investment_plan()
-    db_currency_pairs = db.fetch_currency_pairs()   # list of CurrencyPair rows
-    nav_df            = load_nav_data()
+    (
+        db_stocks,
+        open_tx,
+        db_stock_allocs,
+        db_sector_allocs,
+        db_plans,
+        db_currency_pairs
+    ) = load_dashboard_db_data()
+    nav_df = load_nav_data()
+
+    # Parallel pre-fetch all stock prices concurrently
+    all_equity_symbols = [
+        s.get("Symbol") for s in db_stocks
+        if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
+    ]
+    batch_fetch_stock_info(all_equity_symbols)
 
 plans_list      = db_plans if isinstance(db_plans, list) else ([db_plans] if db_plans else [])
 portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
@@ -192,9 +223,14 @@ currency_pairs_map = {
 def build_fx_cache(cp_tuples):
     """cp_tuples: tuple of (country, symbol) pairs (hashable for caching)."""
     rates = {}
-    for _country, sym in cp_tuples:
-        if sym and sym not in rates:
-            rates[sym] = fetch_fx_rate(sym)
+    symbols_to_fetch = list({sym for _country, sym in cp_tuples if sym})
+    if not symbols_to_fetch:
+        return rates
+
+    with ThreadPoolExecutor(max_workers=min(10, len(symbols_to_fetch))) as executor:
+        fetched_rates = list(executor.map(fetch_fx_rate, symbols_to_fetch))
+        for sym, rate in zip(symbols_to_fetch, fetched_rates):
+            rates[sym] = rate
     return rates
 
 _cp_tuples = tuple(sorted(

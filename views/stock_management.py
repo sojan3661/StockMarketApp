@@ -46,9 +46,12 @@ def get_nav(nav_df, fund_name):
     result = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav","date"]]
     return result.iloc[0] if not result.empty else None
 
+from concurrent.futures import ThreadPoolExecutor
+
+@st.cache_data(ttl=600)
 def get_stock_price(symbol):
     price = None
-    if yf:
+    if yf and symbol:
         for suffix in [".NS", ".BO", ""]:
             try:
                 ticker = yf.Ticker(symbol + suffix)
@@ -62,7 +65,13 @@ def get_stock_price(symbol):
     return price
 
 
-
+def batch_fetch_stock_prices(symbols):
+    """Pre-fetch stock prices for multiple symbols in parallel using ThreadPoolExecutor."""
+    unique_syms = [s for s in set(symbols) if s]
+    if not unique_syms or not yf:
+        return
+    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
+        list(executor.map(get_stock_price, unique_syms))
 
 
 st.title("Asset Management")
@@ -70,11 +79,24 @@ st.title("Asset Management")
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.stop()
+
+@st.cache_data(ttl=300)
+def load_stock_mgmt_db_data():
+    return (
+        db.fetch_sectors(),
+        db.fetch_stocks(),
+        db.fetch_currency_pairs()
+    )
     
 with st.spinner("Loading Database data..."):
-    sectors_data = db.fetch_sectors()
-    stocks_data = db.fetch_stocks()
-    currency_pairs_data = db.fetch_currency_pairs()
+    sectors_data, stocks_data, currency_pairs_data = load_stock_mgmt_db_data()
+
+    # Parallel pre-fetch stock prices for all listed stocks
+    all_symbols = [
+        s.get("Symbol") for s in stocks_data
+        if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
+    ]
+    batch_fetch_stock_prices(all_symbols)
 
 existing_sectors = [s.get('Sector', '') for s in sectors_data if s.get('Sector')]
 existing_symbols = [s.get('Symbol', '').upper() for s in stocks_data if s.get('Symbol')]
