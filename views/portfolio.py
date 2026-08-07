@@ -400,9 +400,8 @@ else:
                 }
                 symbol_to_sector = {s.get("Symbol"): s.get("Sector") for s in db_stocks if s.get("Symbol")}
 
-                mapped_symbols = set(port_stock_allocations.keys())
-                tx_symbols     = {tx.get("Symbol") for tx in open_transactions if tx.get("Portfolio") == port_name}
-                valid_symbols  = mapped_symbols.union(tx_symbols)
+                tx_symbols    = {tx.get("Symbol") for tx in open_transactions if tx.get("Portfolio") == port_name}
+                valid_symbols = tx_symbols
 
                 port_stocks = [s for s in db_stocks if s.get("Symbol") in valid_symbols]
                 port_open_transactions = [
@@ -417,8 +416,11 @@ else:
                     port_alloc_tuple, currency_pairs_map, fx_rates
                 )
 
-            if df.empty or (df["Qty"].sum() == 0 and len(port_stock_allocations) == 0):
-                st.info(f"No assets or allocations found for {port_name}.")
+            if not df.empty:
+                df = df[(df["Qty"] > 0) | (df["Invested Amount"] > 0) | (df["Current Value"] > 0)].reset_index(drop=True)
+
+            if df.empty:
+                st.info(f"No assets with open value found for {port_name}.")
                 continue
 
             # ---- Summary metrics ----
