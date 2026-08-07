@@ -420,41 +420,84 @@ def build_investment_bar_df(port_names_filter=None):
 
 
 def render_investment_bar(bar_df):
-    """Render a grouped bar chart of Current Invested vs Expected Investment (always INR)."""
+    """Render Current Invested vs Expected Investment visualization with toggle (Bar Chart vs Portfolio Allocation Pie Chart)."""
     if bar_df.empty:
         return
-    st.subheader("Current Invested vs Expected Investment")
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="Current Invested",
-        x=bar_df["Portfolio"],
-        y=bar_df["Current Invested"],
-        marker_color="#4C78A8",
-        text=bar_df["Current Invested"].apply(lambda v: f"₹{v:,.0f}"),
-        textposition="outside"
-    ))
-    fig.add_trace(go.Bar(
-        name="Expected Investment",
-        x=bar_df["Portfolio"],
-        y=bar_df["Expected Investment"],
-        marker_color="#F58518",
-        text=bar_df["Expected Investment"].apply(lambda v: f"₹{v:,.0f}"),
-        textposition="outside"
-    ))
-    fig.update_layout(
-        barmode="group",
-        yaxis_title="Amount (₹)",
-        xaxis_title="Portfolio",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E2E8F0")),
-        margin=dict(t=60, b=40),
-        height=420,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color="#E2E8F0"),
-        xaxis=dict(gridcolor="#2D333B"),
-        yaxis=dict(gridcolor="#2D333B")
-    )
-    st.plotly_chart(fig, use_container_width=True)
+
+    col_title, col_toggle = st.columns([6, 4])
+
+    with col_toggle:
+        st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
+        show_pie = st.toggle("Portfolio Allocation", value=False, key="overall_investment_pie_toggle")
+
+    with col_title:
+        if show_pie:
+            st.subheader("Portfolio Allocation")
+        else:
+            st.subheader("Current Invested vs Expected Investment")
+
+    if not show_pie:
+        # Bar Chart: Current Invested vs Expected Investment
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            name="Current Invested",
+            x=bar_df["Portfolio"],
+            y=bar_df["Current Invested"],
+            marker_color="#4C78A8",
+            text=bar_df["Current Invested"].apply(lambda v: f"₹{v:,.0f}"),
+            textposition="outside"
+        ))
+        fig.add_trace(go.Bar(
+            name="Expected Investment",
+            x=bar_df["Portfolio"],
+            y=bar_df["Expected Investment"],
+            marker_color="#F58518",
+            text=bar_df["Expected Investment"].apply(lambda v: f"₹{v:,.0f}"),
+            textposition="outside"
+        ))
+        fig.update_layout(
+            barmode="group",
+            yaxis_title="Amount (₹)",
+            xaxis_title="Portfolio",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#E2E8F0")),
+            margin=dict(t=60, b=40),
+            height=420,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="#E2E8F0"),
+            xaxis=dict(gridcolor="#2D333B"),
+            yaxis=dict(gridcolor="#2D333B")
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        # Pie chart mode: show portfolio allocation
+        alloc_metric = st.toggle("Show by Expected Investment (default: Current Invested)", value=False, key="overall_pie_alloc_toggle")
+
+        pie_val_col = "Expected Investment" if alloc_metric else "Current Invested"
+        pie_data = bar_df[bar_df[pie_val_col] > 0]
+
+        if pie_data.empty:
+            st.info(f"No {pie_val_col} data available for portfolio pie chart.")
+        else:
+            fig_p = go.Figure(go.Pie(
+                labels=pie_data["Portfolio"].tolist(),
+                values=pie_data[pie_val_col].tolist(),
+                hole=0.4,
+                marker_colors=px.colors.qualitative.Pastel,
+                textinfo="label+percent",
+                textposition="inside",
+            ))
+            fig_p.update_layout(
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5, font=dict(color="#E2E8F0")),
+                margin=dict(t=30, b=60, l=0, r=0),
+                height=420,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#E2E8F0")
+            )
+            st.plotly_chart(fig_p, use_container_width=True)
 
 
 def sector_invested_df(port_name=None):
@@ -817,6 +860,6 @@ for i, port_name in enumerate(portfolio_names):
             st.info(f"No invested data found for **{port_name}**.")
         else:
             render_summary_and_pie(port_df, port_sec_df, port_name,
-                                   bar_df=port_bar_df,
+                                   bar_df=None,
                                    metric_expected=port_expected,
                                    total_expected=port_expected)
