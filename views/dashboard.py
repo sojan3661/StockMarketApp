@@ -437,7 +437,7 @@ def build_portfolio_df(port_name):
 
 
 def build_investment_bar_df(port_names_filter=None):
-    """Build Portfolio vs Invested vs Expected DataFrame for bar chart (always INR)."""
+    """Build Portfolio vs Invested vs Expected vs Target DataFrame for bar chart (always INR)."""
     ports = port_names_filter if port_names_filter else portfolio_names
     rows = []
     for port in ports:
@@ -451,7 +451,13 @@ def build_investment_bar_df(port_names_filter=None):
             float(plan.get("Current Invested Amount", 0) or 0)
             + float(plan.get("Monthly SIP", 0) or 0) * float(plan.get("Number of Months", 0) or 0)
         )
-        rows.append({"Portfolio": port, "Current Invested": curr, "Expected Investment": expected})
+        target = float(plan.get("Target", 0) or 0)
+        rows.append({
+            "Portfolio": port,
+            "Current Invested": curr,
+            "Expected Investment": expected,
+            "Target": target
+        })
     return pd.DataFrame(rows)
 
 
@@ -508,10 +514,15 @@ def render_investment_bar(bar_df):
 
     else:
         # Pie chart mode: show portfolio allocation
-        alloc_metric = st.toggle("Show by Expected Investment (default: Current Invested)", value=False, key="overall_pie_alloc_toggle")
+        alloc_metric = st.radio(
+            "Select Metric:",
+            options=["Current Invested", "Expected Investment", "Target"],
+            horizontal=True,
+            key="overall_pie_alloc_radio"
+        )
 
-        pie_val_col = "Expected Investment" if alloc_metric else "Current Invested"
-        pie_data = bar_df[bar_df[pie_val_col] > 0]
+        pie_val_col = alloc_metric
+        pie_data = bar_df[bar_df[pie_val_col] > 0] if pie_val_col in bar_df.columns else pd.DataFrame()
 
         if pie_data.empty:
             st.info(f"No {pie_val_col} data available for portfolio pie chart.")
