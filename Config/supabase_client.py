@@ -14,11 +14,11 @@ class SupabaseClient:
         self.url = url or self._get_secret("SUPABASE_URL") or os.environ.get("SUPABASE_URL") or ""
         self.key = key or self._get_secret("SUPABASE_KEY") or os.environ.get("SUPABASE_KEY") or ""
         
-        # Hardcode your credentials here if not using secrets/env vars
+        # Credentials are read from secrets.toml or environment variables
         if not self.url:
-            self.url = "https://huduumqtkewniumvspwd.supabase.co" # <-- Paste your Betarise Supabase URL here
+            self.url = ""
         if not self.key:
-            self.key = "sb_publishable_RB8_B_OfCsS5xRCuqybtqw_SsPo-aX4" # <-- Paste your Betarise Anon Key here
+            self.key = ""
 
     def _get_secret(self, key_name):
         try:
