@@ -222,12 +222,16 @@ else:
             
             # --- DELETE TAB ---
             with tab_delete:
-                st.warning(f"Are you sure you want to delete the plan **{port_id}**? This action cannot be undone.")
-                
-                # Use a regular button (not inside a form) for immediate action
-                if st.button(f"Delete {port_id}", type="primary", key=f"del_btn_{port_id}"):
-                    if db.delete_investment_plan(portfolio=port_id):
-                        st.success(f"Deleted {port_id} successfully!")
-                        refresh_data()
-                    else:
-                        st.error(f"Failed to delete {port_id}.")
+                inv_amt = float(row.get("Current Invested Amount", 0) or 0.0)
+                if inv_amt > 0:
+                    st.warning(f"⚠️ Cannot delete plan **{port_id}** because its Current Invested Amount is ₹{inv_amt:,.2f} (> 0). Clear or withdraw investments first.")
+                    st.button(f"Delete {port_id}", type="primary", key=f"del_btn_{port_id}", disabled=True, help="Deletion is disabled when Current Invested Amount is greater than 0")
+                else:
+                    st.warning(f"Are you sure you want to delete the plan **{port_id}**? This will delete all associated transactions, sector allocations, and the dashboard plan. This action cannot be undone.")
+                    
+                    if st.button(f"Delete {port_id}", type="primary", key=f"del_btn_{port_id}"):
+                        if db.delete_investment_plan(portfolio=port_id):
+                            st.success(f"Deleted {port_id} successfully!")
+                            refresh_data()
+                        else:
+                            st.error(f"Failed to delete {port_id}.")

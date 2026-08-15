@@ -14,11 +14,11 @@ class SupabaseClient:
         self.url = url or self._get_secret("SUPABASE_URL") or os.environ.get("SUPABASE_URL") or ""
         self.key = key or self._get_secret("SUPABASE_KEY") or os.environ.get("SUPABASE_KEY") or ""
         
-        # Hardcode your credentials here if not using secrets/env vars
+        # Credentials are read from secrets.toml or environment variables
         if not self.url:
-            self.url = "https://huduumqtkewniumvspwd.supabase.co" # <-- Paste your Betarise Supabase URL here
+            self.url = ""
         if not self.key:
-            self.key = "sb_publishable_RB8_B_OfCsS5xRCuqybtqw_SsPo-aX4" # <-- Paste your Betarise Anon Key here
+            self.key = ""
 
     def _get_secret(self, key_name):
         try:
@@ -689,7 +689,9 @@ class SupabaseClient:
             return False
 
     def process_sell_transaction(self, symbol, sell_qty, sell_avg, sell_date, portfolio=None, sell_avg_local=None, sell_avg_usd=None):
-        """Processes a SELL by matching it against open BUYS (FIFO)."""
+        """Processes a SELL by matching it against open BUYS (FIFO).
+        If portfolios share the same platform (from Investment Plan), cross-portfolio FIFO is performed
+        and portfolio assignments are swapped to maintain portfolio inventory balances."""
         headers = self._get_headers()
         if not headers:
             return False
@@ -697,14 +699,41 @@ class SupabaseClient:
         from urllib.parse import quote
         safe_sym = quote(str(symbol).strip(), safe="")
         
-        # 1. Fetch all OPEN transactions for this symbol (SellDate is null) ordered by BuyDate (FIFO)
+        # 1. Determine platform and portfolios on the same platform
+        same_platform_portfolios = None
+        target_portfolio = str(portfolio).strip() if portfolio else None
+        
+        if target_portfolio:
+            plans = self.fetch_investment_plan()
+            target_plan = None
+            if plans:
+                for p in plans:
+                    if str(p.get("Portfolio", "")).strip().lower() == target_portfolio.lower():
+                        target_plan = p
+                        break
+            
+            if target_plan and target_plan.get("Platform"):
+                target_platform = str(target_plan.get("Platform")).strip().lower()
+                same_platform_portfolios = [
+                    p.get("Portfolio") for p in plans
+                    if p.get("Platform") and str(p.get("Platform")).strip().lower() == target_platform
+                ]
+            else:
+                same_platform_portfolios = [target_portfolio]
+
+        # 2. Fetch OPEN transactions for this symbol (SellDate is null) ordered by BuyDate, id (FIFO)
         endpoint = f"{self.url}/rest/v1/Transactions?Symbol=eq.{safe_sym}&SellDate=is.null"
         
-        if portfolio:
-            safe_port = quote(str(portfolio).strip(), safe="")
-            endpoint += f"&Portfolio=eq.{safe_port}"
+        if same_platform_portfolios:
+            if len(same_platform_portfolios) == 1:
+                safe_port = quote(str(same_platform_portfolios[0]).strip(), safe="")
+                endpoint += f"&Portfolio=eq.{safe_port}"
+            else:
+                in_clause = ",".join([f'"{p}"' for p in same_platform_portfolios])
+                safe_in = quote(f"({in_clause})", safe=',"()')
+                endpoint += f"&Portfolio=in.{safe_in}"
             
-        endpoint += "&order=BuyDate.asc"
+        endpoint += "&order=BuyDate.asc,id.asc"
         
         try:
             response = requests.get(endpoint, headers=headers)
@@ -717,7 +746,7 @@ class SupabaseClient:
                 
             remaining_to_sell = float(sell_qty)
             
-            # Count total available to prevent partial failure midway if insufficient qty
+            # Count total available across platform to prevent partial failure
             total_available = sum([float(r.get("Qty", 0)) for r in open_rows])
             if remaining_to_sell > total_available:
                 st.error(f"Insufficient open quantity to sell. You are trying to sell {remaining_to_sell}, but only have {total_available} open.")
@@ -725,14 +754,21 @@ class SupabaseClient:
                 
             base_endpoint = f"{self.url}/rest/v1/Transactions"
             
-            # 2. Iterate and apply FIFO
+            # Track stock taken from other portfolios to perform portfolio swapping
+            pending_transfers = {} # source_portfolio -> quantity owed back
+            remaining_open_rows = [] # list of remaining open row dicts after sell pass
+            
+            # 3. Iterate and apply FIFO for the SELL portion
             for row in open_rows:
-                if remaining_to_sell <= 0:
-                    break
-                    
                 row_id = row.get("id")
                 row_qty = float(row.get("Qty", 0))
+                source_port = row.get("Portfolio")
                 
+                if remaining_to_sell <= 0:
+                    # Untouched open row
+                    remaining_open_rows.append(dict(row))
+                    continue
+                    
                 if remaining_to_sell >= row_qty:
                     # Fully consume this row
                     patch_url = f"{base_endpoint}?id=eq.{row_id}"
@@ -748,17 +784,23 @@ class SupabaseClient:
                         "SellValue": sell_value,
                         "SellValueUSD": sell_value_usd
                     }
+                    if target_portfolio:
+                        patch_data["Portfolio"] = target_portfolio
+                        
                     p_res = requests.patch(patch_url, headers=headers, json=patch_data)
                     p_res.raise_for_status()
                     
+                    if source_port and target_portfolio and str(source_port).strip().lower() != str(target_portfolio).strip().lower():
+                        pending_transfers[source_port] = pending_transfers.get(source_port, 0.0) + row_qty
+                        
                     remaining_to_sell -= row_qty
                 else:
                     # Partial consume (Split the row)
+                    consumed_qty = remaining_to_sell
+                    new_open_qty = row_qty - consumed_qty
                     
-                    # A. Patch the original row to reduce its Qty (keeping it OPEN)
-                    new_open_qty = row_qty - remaining_to_sell
+                    # A. Patch original row to reduce Qty (keeping it OPEN under source_port)
                     patch_url = f"{base_endpoint}?id=eq.{row_id}"
-                    
                     buy_avg_local = row.get("BuyAvgToLocal")
                     buy_avg_usd = row.get("BuyAvgUSD")
                     
@@ -773,12 +815,19 @@ class SupabaseClient:
                     p_res = requests.patch(patch_url, headers=headers, json=patch_data_a)
                     p_res.raise_for_status()
                     
-                    # B. Post a new row for the SOLD portion
-                    buy_val_sold = (buy_avg_local * remaining_to_sell) if buy_avg_local is not None else None
-                    buy_val_usd_sold = (buy_avg_usd * remaining_to_sell) if buy_avg_usd is not None else None
+                    # Add remaining open slice to local open rows list
+                    open_slice = dict(row)
+                    open_slice["Qty"] = new_open_qty
+                    open_slice["BuyValue"] = new_buy_val
+                    open_slice["BuyValueUSD"] = new_buy_val_usd
+                    remaining_open_rows.append(open_slice)
                     
-                    sell_val_sold = (sell_avg_local * remaining_to_sell) if sell_avg_local is not None else None
-                    sell_val_usd_sold = (sell_avg_usd * remaining_to_sell) if sell_avg_usd is not None else None
+                    # B. Post a new row for the SOLD portion (under target_portfolio)
+                    buy_val_sold = (buy_avg_local * consumed_qty) if buy_avg_local is not None else None
+                    buy_val_usd_sold = (buy_avg_usd * consumed_qty) if buy_avg_usd is not None else None
+                    
+                    sell_val_sold = (sell_avg_local * consumed_qty) if sell_avg_local is not None else None
+                    sell_val_usd_sold = (sell_avg_usd * consumed_qty) if sell_avg_usd is not None else None
                     
                     post_data = {
                         "Symbol": symbol,
@@ -794,15 +843,103 @@ class SupabaseClient:
                         "SellAvgUSD": sell_avg_usd,
                         "SellValue": sell_val_sold,
                         "SellValueUSD": sell_val_usd_sold,
-                        "Qty": remaining_to_sell
+                        "Qty": consumed_qty
                     }
-                    if portfolio:
-                        post_data["Portfolio"] = portfolio
+                    if target_portfolio:
+                        post_data["Portfolio"] = target_portfolio
                         
                     n_res = requests.post(base_endpoint, headers=headers, json=post_data)
                     n_res.raise_for_status()
                     
+                    if source_port and target_portfolio and str(source_port).strip().lower() != str(target_portfolio).strip().lower():
+                        pending_transfers[source_port] = pending_transfers.get(source_port, 0.0) + consumed_qty
+                        
                     remaining_to_sell = 0
+            
+            # 4. Perform Portfolio Swap on remaining OPEN rows for pending_transfers
+            if pending_transfers and target_portfolio:
+                for cred_port, owed_qty in list(pending_transfers.items()):
+                    if owed_qty <= 0:
+                        continue
+                        
+                    next_open_rows = []
+                    for orow in remaining_open_rows:
+                        if owed_qty <= 0:
+                            next_open_rows.append(orow)
+                            continue
+                            
+                        orow_port = str(orow.get("Portfolio", "")).strip()
+                        if orow_port.lower() == target_portfolio.lower():
+                            orow_id = orow.get("id")
+                            orow_qty = float(orow.get("Qty", 0))
+                            transfer_qty = min(owed_qty, orow_qty)
+                            
+                            buy_avg_local = orow.get("BuyAvgToLocal")
+                            buy_avg_usd = orow.get("BuyAvgUSD")
+                            
+                            if transfer_qty == orow_qty:
+                                # Entire row transferred to cred_port
+                                patch_url = f"{base_endpoint}?id=eq.{orow_id}"
+                                patch_data = {"Portfolio": cred_port}
+                                p_res = requests.patch(patch_url, headers=headers, json=patch_data)
+                                p_res.raise_for_status()
+                                
+                                orow_copy = dict(orow)
+                                orow_copy["Portfolio"] = cred_port
+                                next_open_rows.append(orow_copy)
+                                owed_qty -= transfer_qty
+                            else:
+                                # Partial transfer: split open row
+                                rem_open_qty = orow_qty - transfer_qty
+                                
+                                # A. Patch original row with reduced Qty (remains in target_portfolio)
+                                patch_url = f"{base_endpoint}?id=eq.{orow_id}"
+                                rem_buy_val = (buy_avg_local * rem_open_qty) if buy_avg_local is not None else None
+                                rem_buy_val_usd = (buy_avg_usd * rem_open_qty) if buy_avg_usd is not None else None
+                                
+                                patch_data_a = {
+                                    "Qty": rem_open_qty,
+                                    "BuyValue": rem_buy_val,
+                                    "BuyValueUSD": rem_buy_val_usd
+                                }
+                                p_res = requests.patch(patch_url, headers=headers, json=patch_data_a)
+                                p_res.raise_for_status()
+                                
+                                rem_orow = dict(orow)
+                                rem_orow["Qty"] = rem_open_qty
+                                rem_orow["BuyValue"] = rem_buy_val
+                                rem_orow["BuyValueUSD"] = rem_buy_val_usd
+                                next_open_rows.append(rem_orow)
+                                
+                                # B. Post new open row for transferred portion under cred_port
+                                t_buy_val = (buy_avg_local * transfer_qty) if buy_avg_local is not None else None
+                                t_buy_val_usd = (buy_avg_usd * transfer_qty) if buy_avg_usd is not None else None
+                                
+                                post_data = {
+                                    "Symbol": symbol,
+                                    "BuyDate": orow.get("BuyDate"),
+                                    "BuyAvg": orow.get("BuyAvg"),
+                                    "BuyAvgToLocal": buy_avg_local,
+                                    "BuyAvgUSD": buy_avg_usd,
+                                    "BuyValue": t_buy_val,
+                                    "BuyValueUSD": t_buy_val_usd,
+                                    "Qty": transfer_qty,
+                                    "Portfolio": cred_port
+                                }
+                                n_res = requests.post(base_endpoint, headers=headers, json=post_data)
+                                n_res.raise_for_status()
+                                
+                                t_orow = dict(orow)
+                                t_orow["Qty"] = transfer_qty
+                                t_orow["Portfolio"] = cred_port
+                                next_open_rows.append(t_orow)
+                                
+                                owed_qty -= transfer_qty
+                        else:
+                            next_open_rows.append(orow)
+                            
+                    remaining_open_rows = next_open_rows
+                    pending_transfers[cred_port] = owed_qty
                     
             return True
             
@@ -1020,29 +1157,71 @@ class SupabaseClient:
             st.error(f"Error migrating Transactions: {e}")
 
         # 5. Delete the old investment plan
-        delete_success = self.delete_investment_plan(old_name)
+        delete_success = self.delete_investment_plan(old_name, force=True)
         if not delete_success:
             return True, f"Portfolio renamed to {new_name}, but failed to delete old record '{old_name}'."
 
         return True, f"Successfully renamed portfolio from '{old_name}' to '{new_name}'."
 
-    def delete_investment_plan(self, portfolio):
-        """Deletes an investment plan."""
+    def delete_investment_plan(self, portfolio, force=False):
+        """Deletes an investment plan and its associated transactions and allocations if Current Invested Amount is 0."""
         headers = self._get_headers()
         if not headers:
             return False
             
-        endpoint = f"{self.url}/rest/v1/Investment%20Plan?Portfolio=eq.{portfolio}"
+        from urllib.parse import quote
+        safe_port = quote(str(portfolio).strip(), safe="")
         
+        # Check current invested amount unless force=True
+        plan_endpoint = f"{self.url}/rest/v1/Investment%20Plan?Portfolio=eq.{safe_port}"
+        if not force:
+            try:
+                get_res = requests.get(plan_endpoint, headers=headers)
+                get_res.raise_for_status()
+                plans = get_res.json()
+                if plans:
+                    current_inv = float(plans[0].get("Current Invested Amount", 0) or 0)
+                    if current_inv > 0:
+                        st.error(f"Cannot delete portfolio '{portfolio}' because Current Invested Amount is {current_inv} (> 0).")
+                        return False
+            except Exception as e:
+                st.warning(f"Could not verify invested amount before deletion: {e}")
+
+        # 1. Delete associated Transactions
+        tx_endpoint = f"{self.url}/rest/v1/Transactions?Portfolio=eq.{safe_port}"
         try:
-            response = requests.delete(endpoint, headers=headers)
+            t_res = requests.delete(tx_endpoint, headers=headers)
+            t_res.raise_for_status()
+        except Exception as e:
+            st.error(f"Error deleting transactions for {portfolio}: {e}")
+            return False
+
+        # 2. Delete associated SectorAllocation
+        sector_endpoint = f"{self.url}/rest/v1/SectorAllocation?Portfolio=eq.{safe_port}"
+        try:
+            s_res = requests.delete(sector_endpoint, headers=headers)
+            s_res.raise_for_status()
+        except Exception as e:
+            st.error(f"Error deleting sector allocations for {portfolio}: {e}")
+
+        # 3. Delete associated StockAllocation
+        stock_endpoint = f"{self.url}/rest/v1/StockAllocation?Portfolio=eq.{safe_port}"
+        try:
+            st_res = requests.delete(stock_endpoint, headers=headers)
+            st_res.raise_for_status()
+        except Exception as e:
+            st.error(f"Error deleting stock allocations for {portfolio}: {e}")
+
+        # 4. Delete Investment Plan record
+        try:
+            response = requests.delete(plan_endpoint, headers=headers)
             response.raise_for_status()
             return True
         except requests.exceptions.HTTPError as e:
-            if response.status_code == 401 or response.status_code == 403:
+            if response.status_code in (401, 403):
                 st.error("Error: RLS policy blocked this deletion.")
             else:
-                st.error(f"Error deleting investment plan: HTTP {response.status_code} - {e.response.text}")
+                st.error(f"Error deleting investment plan: HTTP {response.status_code} - {response.text}")
             return False
         except Exception as e:
             st.error(f"Error deleting investment plan: {e}")
