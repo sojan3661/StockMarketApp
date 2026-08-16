@@ -241,8 +241,111 @@ def search_stock_dialog():
                             st.session_state.selected_mf = scheme_name
                             st.rerun()
 
+@st.dialog("Clean up Assets")
+def cleanup_assets_dialog():
+    with st.spinner("Checking asset allocations and transactions..."):
+        tx_data = db.fetch_all_transactions()
+        alloc_data = db.fetch_stock_allocations()
+
+    symbols_with_tx = {str(t.get("Symbol", "")).strip().upper() for t in tx_data if t.get("Symbol")}
+    symbols_with_alloc = {
+        str(a.get("Symbol", "")).strip().upper()
+        for a in alloc_data
+        if a.get("Symbol") and a.get("Allocation") is not None and float(a.get("Allocation")) > 0
+    }
+
+    eligible_assets = [
+        s for s in stocks_data
+        if str(s.get("Symbol", "")).strip().upper() not in symbols_with_tx
+        and str(s.get("Symbol", "")).strip().upper() not in symbols_with_alloc
+    ]
+
+    if not eligible_assets:
+        st.info("ℹ️ No assets eligible for cleanup. All assets either have transaction history or active portfolio allocations (>0%).")
+        col_ref, col_close = st.columns(2)
+        with col_ref:
+            if st.button("🔄 Refresh", use_container_width=True, key="dlg_empty_ref"):
+                st.cache_data.clear()
+                st.rerun()
+        with col_close:
+            if st.button("Close", use_container_width=True):
+                st.rerun()
+        return
+
+    st.write(f"Found **{len(eligible_assets)}** asset(s) with 0% allocation and no transactions:")
+
+    table_data = [
+        {
+            "Select": False,
+            "Symbol": s.get("Symbol", ""),
+            "Name": s.get("Name", ""),
+            "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
+            "Sector": s.get("Sector", "NA"),
+            "Market Cap": s.get("MarketCap", "NA")
+        }
+        for s in eligible_assets
+    ]
+    df_eligible = pd.DataFrame(table_data)
+
+    edited_df = st.data_editor(
+        df_eligible,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Select": st.column_config.CheckboxColumn(
+                "Select",
+                help="Check to select specific assets to delete",
+                default=False,
+            )
+        },
+        disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
+        key="cleanup_assets_table"
+    )
+
+    selected_rows = edited_df[edited_df["Select"] == True]
+    selected_symbols = [str(sym).strip().upper() for sym in selected_rows["Symbol"].tolist()]
+    eligible_symbols = [str(s.get("Symbol", "")).strip().upper() for s in eligible_assets if s.get("Symbol")]
+
+    if not selected_symbols:
+        st.caption("💡 *No assets selected. Clicking 'Delete Assets' will select and delete **all** eligible assets listed in the table above.*")
+    else:
+        st.caption(f"💡 *{len(selected_symbols)} of {len(eligible_symbols)} asset(s) selected for deletion.*")
+
+    st.markdown("---")
+    col_del, col_ref, col_cancel = st.columns(3)
+
+    with col_del:
+        if st.button("🗑️ Delete Assets", type="primary", use_container_width=True):
+            targets = selected_symbols if selected_symbols else eligible_symbols
+            success_count = 0
+            fail_count = 0
+
+            with st.spinner(f"Deleting {len(targets)} asset(s)..."):
+                for sym in targets:
+                    if db.delete_stock(sym):
+                        success_count += 1
+                    else:
+                        fail_count += 1
+
+            if success_count:
+                st.success(f"✅ Successfully deleted {success_count} asset(s).")
+            if fail_count:
+                st.error(f"❌ Failed to delete {fail_count} asset(s).")
+
+            st.cache_data.clear()
+            st.rerun()
+
+    with col_ref:
+        if st.button("🔄 Refresh", use_container_width=True, key="dlg_has_ref"):
+            st.cache_data.clear()
+            st.rerun()
+
+    with col_cancel:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
 st.subheader("Bulk Import Assets")
-col_dl, col_ul, col_search = st.columns([1, 1, 1])
+col_dl, col_ul, col_search, col_cleanup, col_refresh = st.columns([1, 1, 1, 1, 1])
 
 with col_dl:
     import base64
@@ -260,6 +363,15 @@ with col_ul:
 with col_search:
     if st.button("🔍 Search Assets", use_container_width=True):
         search_stock_dialog()
+
+with col_cleanup:
+    if st.button("🧹 Clean up Assets", use_container_width=True):
+        cleanup_assets_dialog()
+
+with col_refresh:
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 if uploaded_asset_file is not None:
     with st.expander("📋 Preview & Import Uploaded Assets", expanded=True):

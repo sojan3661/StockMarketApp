@@ -499,7 +499,7 @@ for i, port_name in enumerate(portfolio_names):
 
             with st.expander(
                 f"📁 {sector_name} (Target Sector Allocation: {target_alloc}%) - Expected ₹{sector_expected:,.2f}",
-                expanded=True
+                expanded=False
             ):
                 if not sector_stocks:
                     st.info("No assets in this sector")
