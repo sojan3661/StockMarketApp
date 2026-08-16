@@ -366,6 +366,35 @@ class SupabaseClient:
             st.error(f"Error updating stock: {e}")
             return False
 
+    def set_stock_active_status(self, symbol, is_active=False):
+        """Updates the ACTIVE boolean status for a stock in StockManagement and resets allocations if inactive."""
+        headers = self._get_headers()
+        if not headers:
+            return False
+
+        from urllib.parse import quote
+        safe_sym = quote(str(symbol).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/StockManagement?Symbol=eq.{safe_sym}"
+
+        data = {"ACTIVE": is_active}
+
+        try:
+            response = requests.patch(endpoint, headers=headers, json=data)
+            response.raise_for_status()
+
+            if not is_active:
+                # Reset StockAllocation records for this symbol to 0
+                alloc_endpoint = f"{self.url}/rest/v1/StockAllocation?Symbol=eq.{safe_sym}"
+                try:
+                    requests.patch(alloc_endpoint, headers=headers, json={"Allocation": 0})
+                except Exception as ae:
+                    st.warning(f"Note: Could not reset allocations for {symbol}: {ae}")
+
+            return True
+        except Exception as e:
+            st.error(f"Error updating active status for {symbol}: {e}")
+            return False
+
     def update_stock_symbol(self, old_symbol, new_symbol, name, is_equity, sector, is_listed, market_cap, ltp=None, country=None):
         """
         Updates a stock symbol by creating a new record and migrating dependent records

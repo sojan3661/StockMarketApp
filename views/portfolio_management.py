@@ -213,7 +213,11 @@ def load_portfolio_data():
     with st.spinner("Loading data from database..."):
         db_sectors           = db.fetch_sectors()
         db_allocations       = db.fetch_allocations()
-        db_stocks            = sorted(db.fetch_stocks(), key=lambda x: x.get("Symbol", ""))
+        raw_stocks           = db.fetch_stocks()
+        db_stocks            = sorted(
+            [s for s in raw_stocks if s.get("ACTIVE", True) is not False],
+            key=lambda x: x.get("Symbol", "")
+        )
         db_stock_allocations = db.fetch_stock_allocations()
         open_transactions    = db.fetch_open_transactions()
         db_investment_plan   = db.fetch_investment_plan()
@@ -499,7 +503,7 @@ for i, port_name in enumerate(portfolio_names):
 
             with st.expander(
                 f"📁 {sector_name} (Target Sector Allocation: {target_alloc}%) - Expected ₹{sector_expected:,.2f}",
-                expanded=True
+                expanded=False
             ):
                 if not sector_stocks:
                     st.info("No assets in this sector")
