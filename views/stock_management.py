@@ -241,108 +241,301 @@ def search_stock_dialog():
                             st.session_state.selected_mf = scheme_name
                             st.rerun()
 
-@st.dialog("Clean up Assets")
+@st.dialog("Clean up Assets", width="large")
 def cleanup_assets_dialog():
     with st.spinner("Checking asset allocations and transactions..."):
         tx_data = db.fetch_all_transactions()
         alloc_data = db.fetch_stock_allocations()
 
     symbols_with_tx = {str(t.get("Symbol", "")).strip().upper() for t in tx_data if t.get("Symbol")}
+    symbols_with_open_tx = {
+        str(t.get("Symbol", "")).strip().upper()
+        for t in tx_data
+        if t.get("Symbol") and (t.get("SellDate") is None and t.get("SellAvg") is None)
+    }
     symbols_with_alloc = {
         str(a.get("Symbol", "")).strip().upper()
         for a in alloc_data
         if a.get("Symbol") and a.get("Allocation") is not None and float(a.get("Allocation")) > 0
     }
 
-    eligible_assets = [
+    # 1. Eligible for Delete: 0% allocation & NO transactions
+    delete_eligible_assets = [
         s for s in stocks_data
         if str(s.get("Symbol", "")).strip().upper() not in symbols_with_tx
         and str(s.get("Symbol", "")).strip().upper() not in symbols_with_alloc
     ]
 
-    if not eligible_assets:
-        st.info("ℹ️ No assets eligible for cleanup. All assets either have transaction history or active portfolio allocations (>0%).")
-        col_ref, col_close = st.columns(2)
-        with col_ref:
-            if st.button("🔄 Refresh", use_container_width=True, key="dlg_empty_ref"):
-                st.cache_data.clear()
-                st.rerun()
-        with col_close:
-            if st.button("Close", use_container_width=True):
-                st.rerun()
-        return
-
-    st.write(f"Found **{len(eligible_assets)}** asset(s) with 0% allocation and no transactions:")
-
-    table_data = [
-        {
-            "Select": False,
-            "Symbol": s.get("Symbol", ""),
-            "Name": s.get("Name", ""),
-            "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
-            "Sector": s.get("Sector", "NA"),
-            "Market Cap": s.get("MarketCap", "NA")
-        }
-        for s in eligible_assets
+    # 2. Active Assets (0 open transactions, currently ACTIVE != False)
+    active_to_inactive_assets = [
+        s for s in stocks_data
+        if str(s.get("Symbol", "")).strip().upper() in symbols_with_tx
+        and str(s.get("Symbol", "")).strip().upper() not in symbols_with_open_tx
+        and s.get("ACTIVE", True) is not False
     ]
-    df_eligible = pd.DataFrame(table_data)
 
-    edited_df = st.data_editor(
-        df_eligible,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "Select": st.column_config.CheckboxColumn(
-                "Select",
-                help="Check to select specific assets to delete",
-                default=False,
+    # 3. Currently Inactive Assets (ACTIVE == False)
+    currently_inactive_assets = [
+        s for s in stocks_data
+        if s.get("ACTIVE") is False
+    ]
+
+    tab_delete, tab_status = st.tabs(["🧹 Delete Assets (No TX)", "🔄 Asset Status Management"])
+
+    with tab_delete:
+        if not delete_eligible_assets:
+            st.info("ℹ️ No assets eligible for deletion. (All assets either have active portfolio allocations or transaction history).")
+            col_ref, col_close = st.columns(2)
+            with col_ref:
+                if st.button("🔄 Refresh", use_container_width=True, key="del_empty_ref"):
+                    st.cache_data.clear()
+                    st.rerun()
+            with col_close:
+                if st.button("Close", use_container_width=True, key="del_empty_close"):
+                    st.rerun()
+        else:
+            st.write(f"Found **{len(delete_eligible_assets)}** asset(s) with 0% allocation and no transactions:")
+
+            table_data_del = [
+                {
+                    "Select": False,
+                    "Symbol": s.get("Symbol", ""),
+                    "Name": s.get("Name", ""),
+                    "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
+                    "Sector": s.get("Sector", "NA"),
+                    "Market Cap": s.get("MarketCap", "NA")
+                }
+                for s in delete_eligible_assets
+            ]
+            df_del = pd.DataFrame(table_data_del)
+
+            edited_df_del = st.data_editor(
+                df_del,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Select": st.column_config.CheckboxColumn(
+                        "Select",
+                        help="Check to select specific assets to delete",
+                        default=False,
+                    )
+                },
+                disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
+                key="cleanup_delete_table"
             )
-        },
-        disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
-        key="cleanup_assets_table"
-    )
 
-    selected_rows = edited_df[edited_df["Select"] == True]
-    selected_symbols = [str(sym).strip().upper() for sym in selected_rows["Symbol"].tolist()]
-    eligible_symbols = [str(s.get("Symbol", "")).strip().upper() for s in eligible_assets if s.get("Symbol")]
+            selected_rows_del = edited_df_del[edited_df_del["Select"] == True]
+            selected_syms_del = [str(sym).strip().upper() for sym in selected_rows_del["Symbol"].tolist()]
+            eligible_syms_del = [str(s.get("Symbol", "")).strip().upper() for s in delete_eligible_assets if s.get("Symbol")]
 
-    if not selected_symbols:
-        st.caption("💡 *No assets selected. Clicking 'Delete Assets' will select and delete **all** eligible assets listed in the table above.*")
-    else:
-        st.caption(f"💡 *{len(selected_symbols)} of {len(eligible_symbols)} asset(s) selected for deletion.*")
+            if not selected_syms_del:
+                st.caption("💡 *No assets selected. Clicking 'Delete Assets' will select and delete **all** eligible assets listed in the table above.*")
+            else:
+                st.caption(f"💡 *{len(selected_syms_del)} of {len(eligible_syms_del)} asset(s) selected for deletion.*")
 
-    st.markdown("---")
-    col_del, col_ref, col_cancel = st.columns(3)
+            st.markdown("---")
+            col_del, col_ref, col_cancel = st.columns(3)
 
-    with col_del:
-        if st.button("🗑️ Delete Assets", type="primary", use_container_width=True):
-            targets = selected_symbols if selected_symbols else eligible_symbols
-            success_count = 0
-            fail_count = 0
+            with col_del:
+                if st.button("🗑️ Delete Assets", type="primary", use_container_width=True, key="del_btn"):
+                    targets = selected_syms_del if selected_syms_del else eligible_syms_del
+                    success_count = 0
+                    fail_count = 0
 
-            with st.spinner(f"Deleting {len(targets)} asset(s)..."):
-                for sym in targets:
-                    if db.delete_stock(sym):
-                        success_count += 1
-                    else:
-                        fail_count += 1
+                    with st.spinner(f"Deleting {len(targets)} asset(s)..."):
+                        for sym in targets:
+                            if db.delete_stock(sym):
+                                success_count += 1
+                            else:
+                                fail_count += 1
 
-            if success_count:
-                st.success(f"✅ Successfully deleted {success_count} asset(s).")
-            if fail_count:
-                st.error(f"❌ Failed to delete {fail_count} asset(s).")
+                    if success_count:
+                        st.success(f"✅ Successfully deleted {success_count} asset(s).")
+                    if fail_count:
+                        st.error(f"❌ Failed to delete {fail_count} asset(s).")
 
-            st.cache_data.clear()
-            st.rerun()
+                    st.cache_data.clear()
+                    st.rerun()
 
-    with col_ref:
-        if st.button("🔄 Refresh", use_container_width=True, key="dlg_has_ref"):
-            st.cache_data.clear()
-            st.rerun()
+            with col_ref:
+                if st.button("🔄 Refresh", use_container_width=True, key="del_has_ref"):
+                    st.cache_data.clear()
+                    st.rerun()
 
-    with col_cancel:
-        if st.button("Cancel", use_container_width=True):
-            st.rerun()
+            with col_cancel:
+                if st.button("Cancel", use_container_width=True, key="del_cancel_btn"):
+                    st.rerun()
+
+    with tab_status:
+        sub_active, sub_inactive = st.tabs(["🟢 Active Assets (Mark Inactive)", "🔴 Inactive Assets (Mark Active)"])
+
+        with sub_active:
+            if not active_to_inactive_assets:
+                st.info("ℹ️ No active assets found with 0 open positions (all sold).")
+                col_ref, col_close = st.columns(2)
+                with col_ref:
+                    if st.button("🔄 Refresh", use_container_width=True, key="act_empty_ref"):
+                        st.cache_data.clear()
+                        st.rerun()
+                with col_close:
+                    if st.button("Close", use_container_width=True, key="act_empty_close"):
+                        st.rerun()
+            else:
+                st.write(f"Found **{len(active_to_inactive_assets)}** active asset(s) with 0 open positions (all sold):")
+
+                table_data_act = [
+                    {
+                        "Select": False,
+                        "Symbol": s.get("Symbol", ""),
+                        "Name": s.get("Name", ""),
+                        "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
+                        "Sector": s.get("Sector", "NA"),
+                        "Market Cap": s.get("MarketCap", "NA")
+                    }
+                    for s in active_to_inactive_assets
+                ]
+                df_act = pd.DataFrame(table_data_act)
+
+                edited_df_act = st.data_editor(
+                    df_act,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Select": st.column_config.CheckboxColumn(
+                            "Select",
+                            help="Check to select specific assets to mark inactive",
+                            default=False,
+                        )
+                    },
+                    disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
+                    key="cleanup_active_table"
+                )
+
+                selected_rows_act = edited_df_act[edited_df_act["Select"] == True]
+                selected_syms_act = [str(sym).strip().upper() for sym in selected_rows_act["Symbol"].tolist()]
+                eligible_syms_act = [str(s.get("Symbol", "")).strip().upper() for s in active_to_inactive_assets if s.get("Symbol")]
+
+                if not selected_syms_act:
+                    st.caption("💡 *No assets selected. Clicking 'Mark as Inactive' will select and mark **all** listed assets as inactive.*")
+                else:
+                    st.caption(f"💡 *{len(selected_syms_act)} of {len(eligible_syms_act)} asset(s) selected.*")
+
+                st.markdown("---")
+                col_inact, col_ref, col_cancel = st.columns(3)
+
+                with col_inact:
+                    if st.button("💤 Mark as Inactive", type="primary", use_container_width=True, key="act_to_inact_btn"):
+                        targets = selected_syms_act if selected_syms_act else eligible_syms_act
+                        success_count = 0
+                        fail_count = 0
+
+                        with st.spinner(f"Setting {len(targets)} asset(s) to Inactive..."):
+                            for sym in targets:
+                                if db.set_stock_active_status(sym, is_active=False):
+                                    success_count += 1
+                                else:
+                                    fail_count += 1
+
+                        if success_count:
+                            st.success(f"✅ Successfully marked {success_count} asset(s) as Inactive.")
+                        if fail_count:
+                            st.error(f"❌ Failed to update {fail_count} asset(s).")
+
+                        st.cache_data.clear()
+                        st.rerun()
+
+                with col_ref:
+                    if st.button("🔄 Refresh", use_container_width=True, key="act_has_ref"):
+                        st.cache_data.clear()
+                        st.rerun()
+
+                with col_cancel:
+                    if st.button("Cancel", use_container_width=True, key="act_cancel_btn"):
+                        st.rerun()
+
+        with sub_inactive:
+            if not currently_inactive_assets:
+                st.info("ℹ️ No inactive assets currently found in the database.")
+                col_ref, col_close = st.columns(2)
+                with col_ref:
+                    if st.button("🔄 Refresh", use_container_width=True, key="inact_empty_ref"):
+                        st.cache_data.clear()
+                        st.rerun()
+                with col_close:
+                    if st.button("Close", use_container_width=True, key="inact_empty_close"):
+                        st.rerun()
+            else:
+                st.write(f"Found **{len(currently_inactive_assets)}** currently inactive asset(s):")
+
+                table_data_inact = [
+                    {
+                        "Select": False,
+                        "Symbol": s.get("Symbol", ""),
+                        "Name": s.get("Name", ""),
+                        "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
+                        "Sector": s.get("Sector", "NA"),
+                        "Market Cap": s.get("MarketCap", "NA")
+                    }
+                    for s in currently_inactive_assets
+                ]
+                df_inact = pd.DataFrame(table_data_inact)
+
+                edited_df_inact = st.data_editor(
+                    df_inact,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Select": st.column_config.CheckboxColumn(
+                            "Select",
+                            help="Check to select specific assets to mark active",
+                            default=False,
+                        )
+                    },
+                    disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
+                    key="cleanup_inactive_table"
+                )
+
+                selected_rows_inact = edited_df_inact[edited_df_inact["Select"] == True]
+                selected_syms_inact = [str(sym).strip().upper() for sym in selected_rows_inact["Symbol"].tolist()]
+                eligible_syms_inact = [str(s.get("Symbol", "")).strip().upper() for s in currently_inactive_assets if s.get("Symbol")]
+
+                if not selected_syms_inact:
+                    st.caption("💡 *No assets selected. Clicking 'Mark as Active' will select and mark **all** listed assets as active.*")
+                else:
+                    st.caption(f"💡 *{len(selected_syms_inact)} of {len(eligible_syms_inact)} asset(s) selected.*")
+
+                st.markdown("---")
+                col_act, col_ref, col_cancel = st.columns(3)
+
+                with col_act:
+                    if st.button("⚡ Mark as Active", type="primary", use_container_width=True, key="inact_to_act_btn"):
+                        targets = selected_syms_inact if selected_syms_inact else eligible_syms_inact
+                        success_count = 0
+                        fail_count = 0
+
+                        with st.spinner(f"Setting {len(targets)} asset(s) to Active..."):
+                            for sym in targets:
+                                if db.set_stock_active_status(sym, is_active=True):
+                                    success_count += 1
+                                else:
+                                    fail_count += 1
+
+                        if success_count:
+                            st.success(f"✅ Successfully marked {success_count} asset(s) as Active.")
+                        if fail_count:
+                            st.error(f"❌ Failed to update {fail_count} asset(s).")
+
+                        st.cache_data.clear()
+                        st.rerun()
+
+                with col_ref:
+                    if st.button("🔄 Refresh", use_container_width=True, key="inact_has_ref"):
+                        st.cache_data.clear()
+                        st.rerun()
+
+                with col_cancel:
+                    if st.button("Cancel", use_container_width=True, key="inact_cancel_btn"):
+                        st.rerun()
 
 st.subheader("Bulk Import Assets")
 col_dl, col_ul, col_search, col_cleanup, col_refresh = st.columns([1, 1, 1, 1, 1])
