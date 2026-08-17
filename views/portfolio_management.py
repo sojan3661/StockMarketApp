@@ -20,12 +20,6 @@ if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.stop()
 
-if st.button("🔄 Refresh Data", help="Reload live prices and allocations"):
-    for k in list(st.session_state.keys()):
-        if k.startswith("port_stock_allocations_") or k.startswith("editor_") or k.startswith("symbols_"):
-            del st.session_state[k]
-    st.cache_data.clear()
-    st.rerun()
 
 
 
@@ -302,6 +296,157 @@ portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
 if not portfolio_names:
     st.info("No valid portfolios found.")
     st.stop()
+
+
+# -----------------------------
+# Swap Portfolio Dialog
+# -----------------------------
+@st.dialog("Swap Portfolio", width="large")
+def show_swap_portfolio_dialog(portfolio_names, open_transactions):
+    st.caption("Transfer open transactions of a specific asset from one portfolio to another.")
+
+    top_col1, top_col2, top_col3, top_col4 = st.columns([1, 1, 1, 1])
+
+    # 1. From Portfolio
+    with top_col1:
+        from_port = st.selectbox(
+            "From Portfolio",
+            options=["-- Select Portfolio --"] + portfolio_names,
+            key="swap_from_port"
+        )
+
+    # Compute dependent options
+    if from_port != "-- Select Portfolio --":
+        from_txs = [tx for tx in (open_transactions or []) if tx.get("Portfolio") == from_port]
+        asset_symbols = sorted(list({tx.get("Symbol") for tx in from_txs if tx.get("Symbol")}))
+        to_port_options = [p for p in portfolio_names if p != from_port]
+    else:
+        from_txs = []
+        asset_symbols = []
+        to_port_options = []
+
+    # 2. Select Asset
+    with top_col2:
+        selected_asset = st.selectbox(
+            "Select Asset",
+            options=["-- Select Asset --"] + asset_symbols,
+            key="swap_asset"
+        )
+
+    # 3. To Portfolio
+    with top_col3:
+        to_port = st.selectbox(
+            "To Portfolio",
+            options=["-- Select Target Portfolio --"] + to_port_options,
+            key="swap_to_port"
+        )
+
+    # 4. Submit button
+    with top_col4:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        submit_clicked = st.button("🚀 Submit", type="primary", use_container_width=True, key="btn_submit_swap")
+
+    st.markdown("---")
+
+    # Table section below top controls
+    if from_port == "-- Select Portfolio --":
+        st.info("👈 Please select a source portfolio ('From Portfolio') above.")
+        return
+
+    if not from_txs:
+        st.warning(f"No open transactions found in portfolio '{from_port}'.")
+        return
+
+    if not asset_symbols:
+        st.warning(f"No asset symbols found in open transactions for '{from_port}'.")
+        return
+
+    if selected_asset == "-- Select Asset --":
+        st.info("👈 Please select an asset above to view open transactions.")
+        return
+
+    asset_txs = [tx for tx in from_txs if tx.get("Symbol") == selected_asset]
+    if not asset_txs:
+        st.warning(f"No open transactions found for '{selected_asset}' in portfolio '{from_port}'.")
+        return
+
+    st.markdown(f"**Open Transactions for `{selected_asset}` in `{from_port}` ({len(asset_txs)} transaction(s)):**")
+
+    # Build DataFrame for selection table
+    tx_rows = []
+    for tx in asset_txs:
+        tx_rows.append({
+            "Select": False,
+            "ID": tx.get("id"),
+            "Symbol": tx.get("Symbol"),
+            "Buy Date": tx.get("BuyDate", ""),
+            "Qty": float(tx.get("Qty") or 0.0),
+            "Buy Avg": float(tx.get("BuyAvg") or 0.0),
+            "Buy Value": float(tx.get("BuyValue") or 0.0)
+        })
+    df_tx = pd.DataFrame(tx_rows)
+
+    edited_df = st.data_editor(
+        df_tx,
+        key=f"swap_tx_editor_{from_port}_{selected_asset}",
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Select": st.column_config.CheckboxColumn("Select", default=False),
+            "ID": st.column_config.NumberColumn("ID", disabled=True),
+            "Symbol": st.column_config.TextColumn("Symbol", disabled=True),
+            "Buy Date": st.column_config.TextColumn("Buy Date", disabled=True),
+            "Qty": st.column_config.NumberColumn("Qty", format="%.4f", disabled=True),
+            "Buy Avg": st.column_config.NumberColumn("Buy Avg", format="₹%.2f", disabled=True),
+            "Buy Value": st.column_config.NumberColumn("Buy Value", format="₹%.2f", disabled=True),
+        },
+        disabled=["ID", "Symbol", "Buy Date", "Qty", "Buy Avg", "Buy Value"]
+    )
+
+    # Determine transactions to move: specific selection vs Select All default
+    selected_rows = edited_df[edited_df["Select"] == True]
+    if selected_rows.empty:
+        target_tx_ids = edited_df["ID"].tolist()
+        st.info("ℹ️ No transactions selected — **treating as Select All** (all open transactions for this asset will be moved).")
+    else:
+        target_tx_ids = selected_rows["ID"].tolist()
+        st.info(f"ℹ️ **{len(target_tx_ids)}** of **{len(edited_df)}** transaction(s) selected to move.")
+
+    # Handle Submit button click
+    if submit_clicked:
+        if to_port == "-- Select Target Portfolio --":
+            st.error("Please select a target portfolio ('To Portfolio').")
+            return
+        if not target_tx_ids:
+            st.error("No transactions available to move.")
+            return
+
+        with st.spinner("Updating portfolio for selected transactions..."):
+            success = db.update_transactions_portfolio(target_tx_ids, to_port)
+
+        if success:
+            st.success(f"🎉 Successfully moved {len(target_tx_ids)} transaction(s) of '{selected_asset}' from '{from_port}' to '{to_port}'!")
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            st.error("Failed to update transactions. Please try again.")
+
+
+
+# Action Buttons
+col_btn1, col_btn2, _ = st.columns([1, 1, 4])
+with col_btn1:
+    if st.button("🔄 Refresh Data", help="Reload live prices and allocations"):
+        for k in list(st.session_state.keys()):
+            if k.startswith("port_stock_allocations_") or k.startswith("editor_") or k.startswith("symbols_"):
+                del st.session_state[k]
+        st.cache_data.clear()
+        st.rerun()
+
+with col_btn2:
+    if st.button("🔀 Swap Portfolio", help="Move open transactions of an asset between portfolios"):
+        show_swap_portfolio_dialog(portfolio_names, open_transactions)
+
 
 # -----------------------------
 # Tabs Generation
