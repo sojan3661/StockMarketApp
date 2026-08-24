@@ -38,22 +38,29 @@ def load_nav_data():
     except Exception:
         return pd.DataFrame()
 
-def get_nav(nav_df, fund_name):
+def get_nav(nav_df, fund_name, fallback_name=None):
     if nav_df.empty or not fund_name:
+        if fallback_name:
+            return get_nav(nav_df, fallback_name)
         return None
 
-    res = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav"]]
+    fund_str = str(fund_name).strip()
+    res = nav_df.loc[nav_df["scheme_name"].eq(fund_str), ["nav"]]
     if not res.empty:
         return res.iloc[0]["nav"]
 
-    res = nav_df.loc[nav_df["scheme_name"].str.lower() == fund_name.lower(), ["nav"]]
+    res = nav_df.loc[nav_df["scheme_name"].str.lower() == fund_str.lower(), ["nav"]]
     if not res.empty:
         return res.iloc[0]["nav"]
 
-    short_name = fund_name[:15].lower()
-    res = nav_df.loc[nav_df["scheme_name"].str.lower().str.contains(short_name, na=False, regex=False), ["nav"]]
-    if not res.empty:
-        return res.iloc[0]["nav"]
+    if len(fund_str) >= 3:
+        short_name = fund_str[:15].lower()
+        res = nav_df.loc[nav_df["scheme_name"].str.lower().str.contains(short_name, na=False, regex=False), ["nav"]]
+        if not res.empty:
+            return res.iloc[0]["nav"]
+
+    if fallback_name:
+        return get_nav(nav_df, fallback_name)
 
     return None
 
@@ -224,8 +231,6 @@ if "view_in_usd" not in st.session_state:
 def toggle_usd():
     st.session_state.view_in_usd = not st.session_state.view_in_usd
 
-st.checkbox("View in USD", value=st.session_state.view_in_usd, on_change=toggle_usd, key="portfolio_usd_cb")
-
 if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.info("Please set your credentials directly inside the init method of `Config/supabase_client.py`.")
@@ -279,6 +284,223 @@ stocks_map = {s["Symbol"]: s for s in db_stocks}
 
 plans_list      = db_investment_plan if isinstance(db_investment_plan, list) else [db_investment_plan]
 portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
+
+# -----------------------------------------------
+# Merged Data Dialog
+# -----------------------------------------------
+@st.dialog("📊 Merged Portfolio Data", width="large")
+def show_merged_data_dialog():
+    st.caption("View consolidated portfolio data filtered by Broker / Platform and Asset Type.")
+
+    use_usd         = st.session_state.get("view_in_usd", False)
+    currency_symbol = "$" if use_usd else "₹"
+    money_fmt       = f"{currency_symbol} %.2f"
+
+    # Extract unique platforms and portfolios
+    platforms  = sorted(list({str(p.get("Platform")).strip() for p in plans_list if p.get("Platform") and pd.notna(p.get("Platform"))}))
+    portfolios = sorted(list({str(p.get("Portfolio")).strip() for p in plans_list if p.get("Portfolio")}))
+
+    all_brokers = sorted(list(set(platforms + portfolios)))
+
+    col_b1, col_b2, col_b3 = st.columns([2, 2, 1])
+    with col_b1:
+        selected_brokers = st.multiselect(
+            "Choose Broker / Platform",
+            options=all_brokers,
+            default=all_brokers,
+            key="merged_broker_multiselect"
+        )
+
+    with col_b2:
+        selected_asset_types = st.multiselect(
+            "Choose Asset Types",
+            options=["Stock", "Mutual Fund"],
+            default=["Stock", "Mutual Fund"],
+            key="merged_asset_type_multiselect"
+        )
+
+    with col_b3:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        filter_btn = st.button("🔍 Filter", type="primary", use_container_width=True, key="merged_filter_btn")
+
+    if not selected_brokers:
+        st.warning("⚠️ Please select at least one Broker / Platform.")
+        return
+
+    if not selected_asset_types:
+        st.warning("⚠️ Please select at least one asset type (Stock or Mutual Fund).")
+        return
+
+    # Filter portfolios based on selected brokers
+    if set(selected_brokers) == set(all_brokers):
+        target_txs = open_transactions
+    else:
+        matching_ports = set()
+        for broker in selected_brokers:
+            ports = {
+                p.get("Portfolio") for p in plans_list
+                if p.get("Portfolio") == broker or p.get("Platform") == broker
+            }
+            if ports:
+                matching_ports.update(ports)
+            else:
+                matching_ports.add(broker)
+        target_txs = [tx for tx in open_transactions if tx.get("Portfolio") in matching_ports]
+
+    if not target_txs:
+        st.info("No open transactions found for the selected broker(s) / platform(s).")
+        return
+
+    # Aggregate transactions by symbol
+    tx_agg = {}
+    for tx in target_txs:
+        sym = tx.get("Symbol", "")
+        if not sym:
+            continue
+        sell_avg  = tx.get("SellAvg")
+        sell_date = tx.get("SellDate")
+        is_open   = (
+            (sell_avg  is None or sell_avg  == "" or (isinstance(sell_avg,  float) and pd.isna(sell_avg))) and
+            (sell_date is None or sell_date == "" or (isinstance(sell_date, float) and pd.isna(sell_date)))
+        )
+        if not is_open:
+            continue
+
+        qty      = float(tx.get("Qty", 0.0))
+        buy_val  = float(tx.get("BuyValue", 0) or 0)
+        buy_usd  = float(tx.get("BuyValueUSD", 0) or 0)
+        buy_avg  = float(tx.get("BuyAvg", 0.0))
+
+        if sym not in tx_agg:
+            tx_agg[sym] = {"Qty": 0.0, "InvestedTotal": 0.0, "InvestedTotalUSD": 0.0}
+
+        tx_agg[sym]["Qty"] += qty
+        tx_agg[sym]["InvestedTotal"]    += buy_val if buy_val > 0 else buy_avg * qty
+        tx_agg[sym]["InvestedTotalUSD"] += buy_usd
+
+    stocks_lookup = {s["Symbol"]: s for s in db_stocks if s.get("Symbol")}
+    total_invested_portfolio = sum(v["InvestedTotal"] for v in tx_agg.values())
+
+    rows = []
+    for sym, agg in tx_agg.items():
+        p          = stocks_lookup.get(sym, {})
+        name       = p.get("Name", sym)
+        is_equity  = p.get("Equity", True)
+        is_listed  = p.get("Listed", True)
+        country    = (p.get("Country") or "INDIA").upper()
+        asset_type = "Stock" if is_equity else "Mutual Fund"
+
+        if asset_type not in selected_asset_types:
+            continue
+
+        qty          = agg["Qty"]
+        invested_inr = agg["InvestedTotal"]
+        invested_usd = agg["InvestedTotalUSD"]
+        invested_amt = invested_usd if use_usd else invested_inr
+
+        if qty <= 0 and invested_amt <= 0:
+            continue
+
+        pct_alloc   = (invested_inr / total_invested_portfolio * 100) if total_invested_portfolio > 0 else 0.0
+
+        native_price = 0.0
+        pe_ratio     = None
+
+        if is_listed:
+            if is_equity:
+                fetched_price, fetched_pe = get_stock_info(sym)
+                native_price = fetched_price if fetched_price is not None else float(p.get("LTP") or 0.0)
+                pe_ratio     = fetched_pe
+            else:
+                fetched_nav  = get_nav(nav_df, name, sym)
+                native_price = float(fetched_nav) if (fetched_nav is not None and float(fetched_nav) > 0) else float(p.get("LTP") or 0.0)
+        else:
+            native_price = float(p.get("LTP") or 0.0)
+
+        live_price    = convert_price(native_price, country, currency_pairs_map, fx_rates)
+        current_value = qty * live_price
+        running_pnl   = current_value - invested_amt
+        running_pnl_p = (running_pnl / invested_amt * 100) if invested_amt > 0 else 0.0
+        avg_buy       = convert_price((invested_inr / qty) if qty > 0 else 0.0, "INDIA", currency_pairs_map, fx_rates)
+
+        rows.append({
+            "Sector":          p.get("Sector", "Unknown"),
+            "Symbol":          sym,
+            "Name":            name,
+            "Asset Type":      asset_type,
+            "Listing":         "Listed" if is_listed else "Unlisted",
+            "Country":         country,
+            "PE Ratio":        pe_ratio,
+            "Qty":             qty,
+            "Invested Amount": invested_amt,
+            "% of Allocation": pct_alloc,
+            "Avg Buy":         avg_buy,
+            "Live Price":      live_price,
+            "Current Value":   current_value,
+            "Running P&L":     running_pnl,
+            "Running P&L %":   running_pnl_p,
+        })
+
+    if not rows:
+        st.info("No matching assets found for the selected broker and asset type filters.")
+        return
+
+    merged_df = pd.DataFrame(rows)
+    merged_df = merged_df.sort_values(by=["Sector", "Symbol"], ascending=[True, True]).reset_index(drop=True)
+
+    # Display Metrics Summary
+    m_inv   = merged_df["Invested Amount"].sum()
+    m_val   = merged_df["Current Value"].sum()
+    m_pnl   = m_val - m_inv
+    m_pnl_p = (m_pnl / m_inv * 100) if m_inv > 0 else 0.0
+
+    pe_df   = merged_df[
+        (merged_df["PE Ratio"].notnull()) &
+        (~merged_df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
+    ]
+    avg_pe  = pe_df["PE Ratio"].mean() if not pe_df.empty else 0.0
+
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("💰 Total Invested", f"{currency_symbol}{m_inv:,.2f}")
+    mc2.metric("📈 Current Value", f"{currency_symbol}{m_val:,.2f}")
+    mc3.metric("📊 Gain / Loss", f"{currency_symbol}{m_pnl:,.2f}", delta=f"{m_pnl_p:+.2f}%")
+    mc4.metric("🎯 Average PE", f"{avg_pe:.2f}")
+
+    st.markdown("---")
+
+    merged_column_config = {
+        "Symbol":          None,
+        "Country":         None,
+        "Asset Type":      st.column_config.TextColumn("Asset Type"),
+        "PE Ratio":        st.column_config.NumberColumn("PE \nRatio",              format="%.2f"),
+        "Qty":             st.column_config.NumberColumn("Current \nQty",            format="%.4f"),
+        "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount",format=money_fmt),
+        "% of Allocation": st.column_config.NumberColumn("% of \nAllocation",        format="%.2f%%"),
+        "Avg Buy":         st.column_config.NumberColumn("Avg \nBuy Price",           format=money_fmt),
+        "Live Price":      st.column_config.NumberColumn("Live \nPrice",              format=money_fmt),
+        "Current Value":   st.column_config.NumberColumn("Current \nValue",           format=money_fmt),
+        "Running P&L":     st.column_config.NumberColumn("Running \nP&L",             format="%.2f"),
+        "Running P&L %":   st.column_config.NumberColumn("Running \nP&L %",           format="%.2f%%"),
+    }
+
+    st.dataframe(
+        merged_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config=merged_column_config
+    )
+
+# Top Bar Action Buttons
+top_col1, top_col2, top_col3 = st.columns([3, 1, 1])
+with top_col1:
+    st.checkbox("View in USD", value=st.session_state.view_in_usd, on_change=toggle_usd, key="portfolio_usd_cb")
+with top_col2:
+    if st.button("🔄 Refresh Data", use_container_width=True, help="Reload live market prices and portfolio data"):
+        st.cache_data.clear()
+        st.rerun()
+with top_col3:
+    if st.button("📊 Merged Data", use_container_width=True, help="View consolidated portfolio data filtered by Broker and Asset Type"):
+        show_merged_data_dialog()
 
 # -----------------------------------------------
 # Portfolio display builder
