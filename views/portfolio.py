@@ -373,6 +373,7 @@ def get_portfolio_display_data(port_stocks, port_open_transactions, nav_df,
             "Name":            name,
             "Asset Type":      "Stock" if is_equity else "Mutual Fund",
             "Listing":         "Listed" if is_listed else "Unlisted",
+            "Country":         country,
             "PE Ratio":        pe_ratio,
             "Qty":             qty,
             "Invested Amount": invested_amt,
@@ -386,7 +387,7 @@ def get_portfolio_display_data(port_stocks, port_open_transactions, nav_df,
 
     if not display_data:
         return pd.DataFrame(columns=[
-            "Sector", "Symbol", "Name", "Asset Type", "Listing", "PE Ratio",
+            "Sector", "Symbol", "Name", "Asset Type", "Listing", "Country", "PE Ratio",
             "Qty", "Invested Amount", "% of Allocation", "Avg Buy",
             "Live Price", "Current Value", "Running P&L", "Running P&L %"
         ])
@@ -414,7 +415,6 @@ else:
     for i, port_name in enumerate(tab_names):
         with tabs[i]:
             st.divider()
-            st.subheader(f"Assets for {port_name}")
 
             if port_name == "Overall Portfolio":
                 port_stock_allocations  = {}
@@ -463,28 +463,8 @@ else:
                 st.info(f"No assets with open value found for {port_name}.")
                 continue
 
-            # ---- Summary metrics ----
-            total_invested    = df["Invested Amount"].sum()
-            total_curr_val    = df["Current Value"].sum()
-            gain_loss         = total_curr_val - total_invested
-            gain_loss_pct     = (gain_loss / total_invested * 100) if total_invested > 0 else 0.0
-
-            pe_df  = df[
-                (df["PE Ratio"].notnull()) &
-                (~df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
-            ]
-            avg_pe = pe_df["PE Ratio"].mean() if not pe_df.empty else 0.0
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("💰 Total Invested",  f"{currency_symbol}{total_invested:,.2f}")
-            m2.metric("📈 Current Value",   f"{currency_symbol}{total_curr_val:,.2f}")
-            m3.metric("📊 Gain / Loss",     f"{currency_symbol}{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
-            m4.metric("🎯 Average PE",      f"{avg_pe:.2f}")
-
             import plotly.graph_objects as go
             import plotly.express as px
-
-            st.divider()
 
             # ---- Pie charts ----
             pie_col1, pie_col2 = st.columns(2)
@@ -504,7 +484,7 @@ else:
                     fig_pie.update_layout(
                         showlegend=False,
                         margin=dict(t=20, b=20, l=0, r=0),
-                        height=400,
+                        height=650,
                         paper_bgcolor='rgba(0,0,0,0)',
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(color="#E2E8F0")
@@ -534,7 +514,7 @@ else:
                     fig_proj.update_layout(
                         showlegend=False,
                         margin=dict(t=20, b=20, l=0, r=0),
-                        height=400,
+                        height=650,
                         paper_bgcolor='rgba(0,0,0,0)',
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(color="#E2E8F0")
@@ -552,36 +532,199 @@ else:
                 mime="text/csv",
             )
 
-            # ---- Data table ----
-            event = st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True,
-                on_select="rerun",
-                selection_mode="single-row",
-                key=f"data_grid_{port_name}",
-                column_config={
-                    "Symbol":          None,
-                    "Asset Type":      None,
-                    "PE Ratio":        st.column_config.NumberColumn("PE \nRatio",              format="%.2f"),
-                    "Qty":             st.column_config.NumberColumn("Current \nQty",            format="%.4f"),
-                    "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount",format=money_fmt),
-                    "% of Allocation": st.column_config.NumberColumn("% of \nAllocation",        format="%.2f%%"),
-                    "Avg Buy":         st.column_config.NumberColumn("Avg \nBuy Price",           format=money_fmt),
-                    "Live Price":      st.column_config.NumberColumn("Live \nPrice",              format=money_fmt),
-                    "Current Value":   st.column_config.NumberColumn("Current \nValue",           format=money_fmt),
-                    "Running P&L":     st.column_config.NumberColumn("Running \nP&L",             format=money_fmt),
-                    "Running P&L %":   st.column_config.NumberColumn("Running \nP&L %",           format="%.2f%%"),
-                }
-            )
+            # ---- Asset View Rendering (Conditional Tabs / Single View) ----
+            stocks_df = df[df["Asset Type"] == "Stock"].reset_index(drop=True)
+            mf_df     = df[df["Asset Type"] == "Mutual Fund"].reset_index(drop=True)
+
+            s_count   = len(stocks_df)
+            m_count   = len(mf_df)
+            all_count = len(df)
+
+            common_column_config = {
+                "Symbol":          None,
+                "Asset Type":      None,
+                "Country":         None,
+                "PE Ratio":        st.column_config.NumberColumn("PE \nRatio",              format="%.2f"),
+                "Qty":             st.column_config.NumberColumn("Current \nQty",            format="%.4f"),
+                "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount",format=money_fmt),
+                "% of Allocation": st.column_config.NumberColumn("% of \nAllocation",        format="%.2f%%"),
+                "Avg Buy":         st.column_config.NumberColumn("Avg \nBuy Price",           format=money_fmt),
+                "Live Price":      st.column_config.NumberColumn("Live \nPrice",              format=money_fmt),
+                "Current Value":   st.column_config.NumberColumn("Current \nValue",           format=money_fmt),
+                "Running P&L":     st.column_config.NumberColumn("Running \nP&L",             format=money_fmt),
+                "Running P&L %":   st.column_config.NumberColumn("Running \nP&L %",           format="%.2f%%"),
+            }
+
+            def render_all_view():
+                with st.container(border=True):
+                    st.subheader(f"🌐 All Assets ({all_count})")
+                    if not df.empty:
+                        a_inv   = df["Invested Amount"].sum()
+                        a_val   = df["Current Value"].sum()
+                        a_pnl   = a_val - a_inv
+                        a_pnl_p = (a_pnl / a_inv * 100) if a_inv > 0 else 0.0
+
+                        a_pe_df = df[
+                            (df["PE Ratio"].notnull()) &
+                            (~df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
+                        ]
+                        a_avg_pe = a_pe_df["PE Ratio"].mean() if not a_pe_df.empty else 0.0
+
+                        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+                        m_col1.metric("💰 Total Invested", f"{currency_symbol}{a_inv:,.2f}")
+                        m_col2.metric("📈 Current Value", f"{currency_symbol}{a_val:,.2f}")
+                        m_col3.metric("📊 Gain / Loss", f"{currency_symbol}{a_pnl:,.2f}", delta=f"{a_pnl_p:+.2f}%")
+                        m_col4.metric("🎯 Average PE", f"{a_avg_pe:.2f}")
+
+                        all_column_config = dict(common_column_config)
+                        all_column_config["Asset Type"] = st.column_config.TextColumn("Asset Type")
+                        return st.dataframe(
+                            df,
+                            use_container_width=True,
+                            hide_index=True,
+                            on_select="rerun",
+                            selection_mode="single-row",
+                            key=f"data_grid_all_{port_name}",
+                            column_config=all_column_config
+                        )
+                    else:
+                        st.info("No assets found in this portfolio.")
+                        return None
+
+            def render_stocks_view():
+                with st.container(border=True):
+                    st.subheader(f"📈 Stocks ({s_count})")
+                    if not stocks_df.empty:
+                        s_inv   = stocks_df["Invested Amount"].sum()
+                        s_val   = stocks_df["Current Value"].sum()
+                        s_pnl   = s_val - s_inv
+                        s_pnl_p = (s_pnl / s_inv * 100) if s_inv > 0 else 0.0
+
+                        s_pe_df = stocks_df[
+                            (stocks_df["PE Ratio"].notnull()) &
+                            (~stocks_df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
+                        ]
+                        s_avg_pe = s_pe_df["PE Ratio"].mean() if not s_pe_df.empty else 0.0
+
+                        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+                        m_col1.metric("💰 Total Invested", f"{currency_symbol}{s_inv:,.2f}")
+                        m_col2.metric("📈 Current Value", f"{currency_symbol}{s_val:,.2f}")
+                        m_col3.metric("📊 Gain / Loss", f"{currency_symbol}{s_pnl:,.2f}", delta=f"{s_pnl_p:+.2f}%")
+                        m_col4.metric("🎯 Average PE", f"{s_avg_pe:.2f}")
+
+                        return st.dataframe(
+                            stocks_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            on_select="rerun",
+                            selection_mode="single-row",
+                            key=f"data_grid_stocks_{port_name}",
+                            column_config=common_column_config
+                        )
+                    else:
+                        st.info("No stock assets in this portfolio.")
+                        return None
+
+            def render_mf_view():
+                with st.container(border=True):
+                    st.subheader(f"📊 Mutual Funds ({m_count})")
+                    if not mf_df.empty:
+                        m_inv   = mf_df["Invested Amount"].sum()
+                        m_val   = mf_df["Current Value"].sum()
+                        m_pnl   = m_val - m_inv
+                        m_pnl_p = (m_pnl / m_inv * 100) if m_inv > 0 else 0.0
+
+                        m_col1, m_col2, m_col3 = st.columns(3)
+                        m_col1.metric("💰 Total Invested", f"{currency_symbol}{m_inv:,.2f}")
+                        m_col2.metric("📈 Current Value", f"{currency_symbol}{m_val:,.2f}")
+                        m_col3.metric("📊 Gain / Loss", f"{currency_symbol}{m_pnl:,.2f}", delta=f"{m_pnl_p:+.2f}%")
+
+                        mf_column_config = dict(common_column_config)
+                        mf_column_config["PE Ratio"] = None # Hide PE Ratio for Mutual Funds
+                        return st.dataframe(
+                            mf_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            on_select="rerun",
+                            selection_mode="single-row",
+                            key=f"data_grid_mf_{port_name}",
+                            column_config=mf_column_config
+                        )
+                    else:
+                        st.info("No mutual fund assets in this portfolio.")
+                        return None
+
+            event_all    = None
+            event_stocks = None
+            event_mf     = None
+
+            if s_count > 0 and m_count > 0:
+                # Both Stocks & Mutual Funds present -> Show all 3 tabs
+                asset_tab_all, asset_tab_stocks, asset_tab_mf = st.tabs([
+                    f"🌐 All Assets ({all_count})",
+                    f"📈 Stocks ({s_count})",
+                    f"📊 Mutual Funds ({m_count})"
+                ])
+                with asset_tab_all:
+                    event_all = render_all_view()
+                with asset_tab_stocks:
+                    event_stocks = render_stocks_view()
+                with asset_tab_mf:
+                    event_mf = render_mf_view()
+
+            elif s_count > 0:
+                # Only Stocks present -> Show only Stocks section (no tabs)
+                event_stocks = render_stocks_view()
+
+            elif m_count > 0:
+                # Only Mutual Funds present -> Show only Mutual Funds section (no tabs)
+                event_mf = render_mf_view()
 
             # ---- Order history ----
-            selected_rows = event.selection.rows
-            if selected_rows:
-                selected_index   = selected_rows[0]
-                selected_symbol  = df.iloc[selected_index]["Symbol"]
-                selected_name    = df.iloc[selected_index]["Name"]
-                selected_country = (df.iloc[selected_index].get("Country") or "INDIA").upper()
+            # Track active selection across the asset view tabs/section
+            last_sel_type_key    = f"last_selected_type_{port_name}"
+            prev_all_rows_key    = f"prev_all_rows_{port_name}"
+            prev_stocks_rows_key = f"prev_stocks_rows_{port_name}"
+            prev_mf_rows_key     = f"prev_mf_rows_{port_name}"
+
+            all_rows    = event_all.selection.rows if (event_all and hasattr(event_all, "selection")) else []
+            stocks_rows = event_stocks.selection.rows if (event_stocks and hasattr(event_stocks, "selection")) else []
+            mf_rows     = event_mf.selection.rows if (event_mf and hasattr(event_mf, "selection")) else []
+
+            prev_all_rows    = st.session_state.get(prev_all_rows_key, [])
+            prev_stocks_rows = st.session_state.get(prev_stocks_rows_key, [])
+            prev_mf_rows     = st.session_state.get(prev_mf_rows_key, [])
+
+            if all_rows != prev_all_rows:
+                st.session_state[last_sel_type_key]    = "all" if all_rows else None
+                st.session_state[prev_all_rows_key]    = all_rows
+            elif stocks_rows != prev_stocks_rows:
+                st.session_state[last_sel_type_key]    = "stocks" if stocks_rows else None
+                st.session_state[prev_stocks_rows_key] = stocks_rows
+            elif mf_rows != prev_mf_rows:
+                st.session_state[last_sel_type_key]    = "mf" if mf_rows else None
+                st.session_state[prev_mf_rows_key]     = mf_rows
+
+            selected_asset_row = None
+            last_sel_type = st.session_state.get(last_sel_type_key)
+
+            if last_sel_type == "all" and all_rows and all_rows[0] < len(df):
+                selected_asset_row = df.iloc[all_rows[0]]
+            elif last_sel_type == "stocks" and stocks_rows and stocks_rows[0] < len(stocks_df):
+                selected_asset_row = stocks_df.iloc[stocks_rows[0]]
+            elif last_sel_type == "mf" and mf_rows and mf_rows[0] < len(mf_df):
+                selected_asset_row = mf_df.iloc[mf_rows[0]]
+            elif all_rows and all_rows[0] < len(df):
+                selected_asset_row = df.iloc[all_rows[0]]
+            elif stocks_rows and stocks_rows[0] < len(stocks_df):
+                selected_asset_row = stocks_df.iloc[stocks_rows[0]]
+            elif mf_rows and mf_rows[0] < len(mf_df):
+                selected_asset_row = mf_df.iloc[mf_rows[0]]
+
+            if selected_asset_row is not None:
+                selected_symbol  = selected_asset_row["Symbol"]
+                selected_name    = selected_asset_row["Name"]
+                selected_country = (selected_asset_row.get("Country") or "INDIA").upper()
 
                 # Resolve the native currency symbol for this stock's country
                 # e.g. INDIA -> "₹", USA -> "$", UK -> "£"
@@ -662,7 +805,7 @@ else:
                             plot_bgcolor='rgba(0,0,0,0)',
                             font=dict(color="#E2E8F0"),
                             margin=dict(t=10, b=20, l=10, r=10),
-                            height=300,
+                            height=600,
                             xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
                             yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)", tickformat=",.2f")
                         )
