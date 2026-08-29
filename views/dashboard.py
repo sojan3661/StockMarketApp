@@ -44,7 +44,7 @@ with col2:
 # -----------------------------------------------
 # Load data from central cache
 # -----------------------------------------------
-from Config.data_cache import get_global_app_data, refresh_all_data, get_stock_price, get_stock_info, get_nav, resolve_asset_ltp
+from Config.data_cache import get_global_app_data, refresh_all_data, get_stock_price, get_stock_info, get_nav, resolve_asset_ltp, calculate_open_capital_gains
 
 app_data = get_global_app_data()
 db_stocks          = app_data.get("stocks", [])
@@ -488,6 +488,16 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     m2.metric("🎯 Expected Investment", f"{currency_symbol}{exp_display:,.2f}")
     m3.metric("📈 Current Value",       f"{currency_symbol}{total_curr_val:,.2f}")
     m4.metric("📊 Gain / Loss",         f"{currency_symbol}{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
+
+    # ---- Short Term & Long Term Capital Gains (Open Positions) ----
+    target_txs = open_tx if port_label == "All Portfolios" else [t for t in open_tx if t.get("Portfolio") == port_label]
+    live_map = dict(zip(df["Symbol"], df["Live Price"])) if "Symbol" in df.columns and "Live Price" in df.columns else {}
+    cg_dash = calculate_open_capital_gains(target_txs, live_map, currency_pairs_map, fx_rates, use_usd)
+
+    cg_col1, cg_col2 = st.columns(2)
+    cg_col1.metric("⏱️ Short-Term Capital Gain (STCG ≤ 1 yr)", f"{currency_symbol}{cg_dash['stcg_gain']:,.2f}", delta=f"{cg_dash['stcg_pct']:+.2f}%")
+    cg_col2.metric("⏳ Long-Term Capital Gain (LTCG > 1 yr)", f"{currency_symbol}{cg_dash['ltcg_gain']:,.2f}", delta=f"{cg_dash['ltcg_pct']:+.2f}%")
+
 
 
     # Show live FX rates being used

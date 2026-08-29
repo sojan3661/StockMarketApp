@@ -268,3 +268,89 @@ def resolve_asset_ltp(item, nav_df):
                 pass
 
     return None
+
+
+def calculate_open_capital_gains(open_txs, live_price_map=None, currency_pairs_map=None, fx_rates=None, use_usd=False, symbol_filter=None):
+    """
+    Calculate Short-Term (<=365 days) and Long-Term (>365 days) unrealized capital gains for open positions.
+    """
+    stcg_invested, stcg_current = 0.0, 0.0
+    ltcg_invested, ltcg_current = 0.0, 0.0
+    now = pd.Timestamp.now()
+
+    usd_inr = 84.0
+    if use_usd and currency_pairs_map and fx_rates:
+        cp = currency_pairs_map.get("USA", {})
+        sym = cp.get("Symbol", "") if isinstance(cp, dict) else ""
+        if sym and fx_rates.get(sym):
+            usd_inr = float(fx_rates.get(sym) or 84.0)
+
+    live_map = live_price_map or {}
+
+    for tx in (open_txs or []):
+        sym = tx.get("Symbol", "")
+        if not sym:
+            continue
+        if symbol_filter and sym not in symbol_filter:
+            continue
+
+        sell_avg  = tx.get("SellAvg")
+        sell_date = tx.get("SellDate")
+        is_open   = (
+            (sell_avg  is None or sell_avg  == "" or (isinstance(sell_avg,  float) and pd.isna(sell_avg))) and
+            (sell_date is None or sell_date == "" or (isinstance(sell_date, float) and pd.isna(sell_date)))
+        )
+        if not is_open:
+            continue
+
+        qty = float(tx.get("Qty", 0.0) or 0.0)
+        if qty <= 0:
+            continue
+
+        buy_avg     = float(tx.get("BuyAvg", 0.0) or 0.0)
+        buy_val_inr = float(tx.get("BuyValue", 0) or (buy_avg * qty))
+        buy_val_usd = float(tx.get("BuyValueUSD", 0) or 0)
+
+        if use_usd:
+            b_val = buy_val_usd if buy_val_usd > 0 else (buy_val_inr / usd_inr if usd_inr > 0 else buy_val_inr)
+        else:
+            b_val = buy_val_inr
+
+        lp = float(live_map.get(sym, 0.0) or 0.0)
+        if lp <= 0:
+            lp = buy_avg if not use_usd else (buy_avg / usd_inr if usd_inr > 0 else buy_avg)
+        c_val = qty * lp
+
+        buy_date_str = tx.get("BuyDate")
+        is_long = False
+        if buy_date_str:
+            try:
+                buy_dt = pd.to_datetime(buy_date_str)
+                if pd.notna(buy_dt) and (now - buy_dt).days > 365:
+                    is_long = True
+            except Exception:
+                pass
+
+        if is_long:
+            ltcg_invested += b_val
+            ltcg_current  += c_val
+        else:
+            stcg_invested += b_val
+            stcg_current  += c_val
+
+    stcg_gain = stcg_current - stcg_invested
+    stcg_pct  = (stcg_gain / stcg_invested * 100) if stcg_invested > 0 else 0.0
+    ltcg_gain = ltcg_current - ltcg_invested
+    ltcg_pct  = (ltcg_gain / ltcg_invested * 100) if ltcg_invested > 0 else 0.0
+
+    return {
+        "stcg_invested": stcg_invested,
+        "stcg_current": stcg_current,
+        "stcg_gain": stcg_gain,
+        "stcg_pct": stcg_pct,
+        "ltcg_invested": ltcg_invested,
+        "ltcg_current": ltcg_current,
+        "ltcg_gain": ltcg_gain,
+        "ltcg_pct": ltcg_pct,
+    }
+
