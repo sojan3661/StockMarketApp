@@ -489,30 +489,6 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     m3.metric("📈 Current Value",       f"{currency_symbol}{total_curr_val:,.2f}")
     m4.metric("📊 Gain / Loss",         f"{currency_symbol}{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
 
-    # ---- PE Ratio Metrics ----
-    pe_filtered = df[
-        (df["PE Ratio"].notnull()) &
-        (~df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
-    ]
-    avg_pe = pe_filtered["PE Ratio"].mean() if not pe_filtered.empty else 0.0
-
-    st.markdown("### 📊 Valuation & Index Comparison")
-
-    niphy_pe = get_index_pe("NIFTY 50")
-    bank_pe  = get_index_pe("NIFTY BANK")
-
-    col_pe1, col_pe2 = st.columns([1, 2])
-    with col_pe1:
-        st.metric("🎯 Portfolio Avg PE", f"{avg_pe:.2f}")
-    with col_pe2:
-        index_data = {
-            "Index":      ["NIFTY 50", "NIFTY BANK"],
-            "Current PE": [
-                f"{niphy_pe:.2f}" if niphy_pe > 0 else "N/A",
-                f"{bank_pe:.2f}"  if bank_pe  > 0 else "N/A",
-            ]
-        }
-        st.table(pd.DataFrame(index_data))
 
     # Show live FX rates being used
     if use_usd:
@@ -655,32 +631,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     else:
         st.info("No invested data to display for the pie chart yet.")
 
-    st.divider()
 
-    # Asset table
-    if not df.empty and df["Invested"].sum() > 0:
-        st.subheader(f"Assets — {port_label}")
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Symbol":         None,
-                "Portfolio":      None,
-                "Country":        None,
-                "Target Alloc %": None,
-                "Sector Alloc %": None,
-                "Qty":            st.column_config.NumberColumn("Qty",           format="%.4f"),
-                "Invested":       st.column_config.NumberColumn("Invested",       format=money_fmt),
-                "Live Price":     st.column_config.NumberColumn("Live Price",     format=money_fmt),
-                "PE Ratio":       st.column_config.NumberColumn("PE Ratio",       format="%.2f"),
-                "Current Value":  st.column_config.NumberColumn("Current Value",  format=money_fmt),
-                "Running P&L":    st.column_config.NumberColumn("Running P&L",     format=money_fmt),
-                "Running P&L %":  st.column_config.NumberColumn("Running P&L %",   format="%.2f%%"),
-            }
-        )
-    else:
-        st.info(f"No asset data available for {port_label}.")
 
     # ---- Stock-level bar chart ----
     can_show_stock_bar = (port_expected_map is not None and "Portfolio" in df.columns) or total_expected > 0
