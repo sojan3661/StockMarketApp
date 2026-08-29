@@ -127,7 +127,12 @@ def _usdinr(currency_pairs_map, fx_rates):
 def convert_price(native_price, country, currency_pairs_map, fx_rates, use_usd):
     """Convert native_price of a country's stock to display currency (INR or USD)."""
     country = (country or "INDIA").upper()
-    inr_price = native_price * _inr_per_unit(country, currency_pairs_map, fx_rates)
+    try:
+        val = float(native_price or 0.0)
+    except (ValueError, TypeError):
+        val = 0.0
+    rate = _inr_per_unit(country, currency_pairs_map, fx_rates)
+    inr_price = val * (rate if rate is not None else 1.0)
 
     if not use_usd:
         return inr_price
@@ -354,13 +359,15 @@ if not db.is_configured():
     st.info("Please set your credentials directly inside the init method of `Config/supabase_client.py`.")
     st.stop()
 
-# 1. Fetch DB records
-with st.spinner("Loading portfolio data and transactions..."):
-    db_stocks = db.fetch_stocks()
-    open_transactions = db.fetch_open_transactions()
-    all_transactions = db.fetch_all_transactions()
-    db_investment_plan = db.fetch_investment_plan()
-    db_currency_pairs = db.fetch_currency_pairs()
+# 1. Fetch DB records from central cache
+from Config.data_cache import get_global_app_data, refresh_all_data
+
+app_data = get_global_app_data()
+db_stocks          = app_data.get("stocks", [])
+open_transactions  = app_data.get("open_transactions", [])
+all_transactions   = app_data.get("all_transactions", [])
+db_investment_plan = app_data.get("investment_plan", [])
+db_currency_pairs  = app_data.get("currency_pairs", [])
 
 # 2. Determine active equity stocks (where quantity > 0 currently)
 tx_agg = {}

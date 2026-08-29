@@ -25,8 +25,10 @@ def refresh_data():
 # ---------------------------------------------------------
 # 1. Fetch Existing Plans
 # ---------------------------------------------------------
-with st.spinner("Loading investment plans..."):
-    plans = db.fetch_investment_plan()
+from Config.data_cache import get_global_app_data, refresh_all_data
+
+app_data = get_global_app_data()
+plans = app_data.get("investment_plan", [])
     
 # Convert to DataFrame for easier handling
 # Convert to DataFrame for easier handling

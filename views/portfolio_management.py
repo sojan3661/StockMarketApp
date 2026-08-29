@@ -56,31 +56,7 @@ from concurrent.futures import ThreadPoolExecutor
 # -----------------------------
 # Cache NSE / Yahoo Price
 # -----------------------------
-@st.cache_data(ttl=600)
-def get_stock_price(symbol):
-    """Returns native price (in the stock's home currency)."""
-    price = 0.0
 
-    if yf and symbol:
-        for suffix in [".NS", ".BO", ""]:
-            try:
-                ticker = yf.Ticker(symbol + suffix)
-                p = ticker.fast_info.last_price
-                if p and p > 0:
-                    return float(p)
-            except Exception:
-                continue
-
-    return price
-
-
-def batch_fetch_stock_prices(symbols):
-    """Pre-fetch stock prices for multiple symbols in parallel using ThreadPoolExecutor."""
-    unique_syms = [s for s in set(symbols) if s]
-    if not unique_syms or not yf:
-        return
-    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
-        list(executor.map(get_stock_price, unique_syms))
 
 
 # -----------------------------
@@ -173,77 +149,41 @@ def inr_per_unit(country, currency_pairs_map, fx_rates):
 
 def to_inr(native_price, country, currency_pairs_map, fx_rates):
     """Convert a native price to INR using the country's FX rate."""
-    return native_price * inr_per_unit(country, currency_pairs_map, fx_rates)
+    if native_price is None:
+        return 0.0
+    try:
+        val = float(native_price)
+    except (ValueError, TypeError):
+        return 0.0
+    rate = inr_per_unit(country, currency_pairs_map, fx_rates)
+    return val * (rate if rate is not None else 1.0)
+
 
 
 # -----------------------------
 # Get MF NAV
 # -----------------------------
-def get_nav(nav_df, fund_name):
-    if nav_df.empty or not fund_name:
-        return 0.0
 
-    res = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav"]]
-    if not res.empty:
-        return float(res.iloc[0]["nav"])
-
-    res = nav_df.loc[nav_df["scheme_name"].str.lower() == fund_name.lower(), ["nav"]]
-    if not res.empty:
-        return float(res.iloc[0]["nav"])
-
-    short_name = fund_name[:15].lower()
-    res = nav_df.loc[nav_df["scheme_name"].str.lower().str.contains(short_name, na=False, regex=False), ["nav"]]
-    if not res.empty:
-        return float(res.iloc[0]["nav"])
-
-    return 0.0
 
 
 # -----------------------------
-# Load Database Data
+# Load Database Data from central cache
 # -----------------------------
-@st.cache_data(ttl=600)
-def load_portfolio_data():
-    with st.spinner("Loading data from database..."):
-        db_sectors           = db.fetch_sectors()
-        db_allocations       = db.fetch_allocations()
-        raw_stocks           = db.fetch_stocks()
-        db_stocks            = sorted(
-            [s for s in raw_stocks if s.get("ACTIVE", True) is not False],
-            key=lambda x: x.get("Symbol", "")
-        )
-        db_stock_allocations = db.fetch_stock_allocations()
-        open_transactions    = db.fetch_open_transactions()
-        db_investment_plan   = db.fetch_investment_plan()
-        db_currency_pairs    = db.fetch_currency_pairs()
-        return (
-            db_sectors,
-            db_allocations,
-            db_stocks,
-            db_stock_allocations,
-            open_transactions,
-            db_investment_plan,
-            db_currency_pairs
-        )
+from Config.data_cache import get_global_app_data, refresh_all_data, get_stock_price, get_stock_info, get_nav, resolve_asset_ltp
 
-(
-    db_sectors,
-    db_allocations,
-    db_stocks,
-    db_stock_allocations,
-    open_transactions,
-    db_investment_plan,
-    db_currency_pairs
-) = load_portfolio_data()
-
-nav_df = load_nav_data()
-
-# Parallel pre-fetch stock prices for all listed stocks
-all_equity_symbols = [
-    s.get("Symbol") for s in db_stocks
-    if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
-]
-batch_fetch_stock_prices(all_equity_symbols)
+app_data = get_global_app_data()
+db_sectors           = app_data.get("sectors", [])
+db_allocations       = app_data.get("allocations", [])
+raw_stocks           = app_data.get("stocks", [])
+db_stocks            = sorted(
+    [s for s in raw_stocks if s.get("ACTIVE", True) is not False],
+    key=lambda x: x.get("Symbol", "")
+)
+db_stock_allocations = app_data.get("stock_allocations", [])
+open_transactions    = app_data.get("open_transactions", [])
+db_investment_plan   = app_data.get("investment_plan", [])
+db_currency_pairs    = app_data.get("currency_pairs", [])
+nav_df               = app_data.get("nav_df", pd.DataFrame())
 
 # Build currency pair lookup: country (uppercase) -> CurrencyPair row
 currency_pairs_map = {
@@ -375,10 +315,14 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
     # Build DataFrame for selection table
     tx_rows = []
     for tx in asset_txs:
+        sym_code = tx.get("Symbol")
+        stock_match = next((s for s in db_stocks if s.get("Symbol") == sym_code), {})
+        asset_name = stock_match.get("Name") or sym_code
         tx_rows.append({
             "Select": False,
             "ID": tx.get("id"),
-            "Symbol": tx.get("Symbol"),
+            "Asset Name": asset_name,
+            "Symbol": sym_code,
             "Buy Date": tx.get("BuyDate", ""),
             "Qty": float(tx.get("Qty") or 0.0),
             "Buy Avg": float(tx.get("BuyAvg") or 0.0),
@@ -394,13 +338,14 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
         column_config={
             "Select": st.column_config.CheckboxColumn("Select", default=False),
             "ID": st.column_config.NumberColumn("ID", disabled=True),
-            "Symbol": st.column_config.TextColumn("Symbol", disabled=True),
+            "Symbol": None,
+            "Asset Name": st.column_config.TextColumn("Asset Name", disabled=True),
             "Buy Date": st.column_config.TextColumn("Buy Date", disabled=True),
             "Qty": st.column_config.NumberColumn("Qty", format="%.4f", disabled=True),
             "Buy Avg": st.column_config.NumberColumn("Buy Avg", format="₹%.2f", disabled=True),
             "Buy Value": st.column_config.NumberColumn("Buy Value", format="₹%.2f", disabled=True),
         },
-        disabled=["ID", "Symbol", "Buy Date", "Qty", "Buy Avg", "Buy Value"]
+        disabled=["ID", "Symbol", "Asset Name", "Buy Date", "Qty", "Buy Avg", "Buy Value"]
     )
 
     # Determine transactions to move: specific selection vs Select All default
@@ -437,11 +382,7 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
 col_btn1, col_btn2, _ = st.columns([1, 1, 4])
 with col_btn1:
     if st.button("🔄 Refresh Data", help="Reload live prices and allocations"):
-        for k in list(st.session_state.keys()):
-            if k.startswith("port_stock_allocations_") or k.startswith("editor_") or k.startswith("symbols_"):
-                del st.session_state[k]
-        st.cache_data.clear()
-        st.rerun()
+        refresh_all_data()
 
 with col_btn2:
     if st.button("🔀 Swap Portfolio", help="Move open transactions of an asset between portfolios"):
@@ -601,7 +542,7 @@ for i, port_name in enumerate(portfolio_names):
                     else:
                         native_price = float(p.get("LTP") or 0.0)
                 else:
-                    native_price = get_nav(nav_df, sym)
+                    native_price = get_nav(nav_df, sym, name)
 
                 # Convert to INR — no-op (×1.0) for Indian stocks
                 price_inr = to_inr(native_price, country, currency_pairs_map, fx_rates)
@@ -620,8 +561,8 @@ for i, port_name in enumerate(portfolio_names):
                 project_alloc_pct = (expected / portfolio_expected_sum * 100) if portfolio_expected_sum > 0 else 0.0
 
                 rows.append({
+                    "Name":         name or sym,
                     "Symbol":       sym,
-                    "Name":         name,
                     "Country":      country,
                     "LTP (INR)":    price_inr,
                     "Qty":          qty,
@@ -677,8 +618,9 @@ for i, port_name in enumerate(portfolio_names):
                     hide_index=True,
                     use_container_width=True,
                     column_config={
-                        "Name":         None,   # Hidden — used internally
+                        "Symbol":       None,   # Hidden — used internally
                         "Country":      None,   # Hidden — used for FX only
+                        "Name":         st.column_config.TextColumn("Asset Name", disabled=True),
                         "Allocation %": st.column_config.NumberColumn(
                             "Allocation %",
                             min_value=0.0,

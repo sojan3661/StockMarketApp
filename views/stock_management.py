@@ -40,38 +40,172 @@ def load_nav_data():
         st.error(f"Error fetching Mutual Fund Data: {e}")
         return pd.DataFrame()
 
-def get_nav(nav_df, fund_name):
+def _find_nav_in_df(nav_df, *identifiers):
     if nav_df.empty:
         return None
-    result = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav","date"]]
-    return result.iloc[0] if not result.empty else None
+    for item in identifiers:
+        if not item:
+            continue
+        term_str = str(item).strip()
+        if not term_str or term_str.upper() in ("NA", "NONE", ""):
+            continue
+        term_lower = term_str.lower()
+        term_upper = term_str.upper()
+        if "scheme_code" in nav_df.columns:
+            res = nav_df.loc[nav_df["scheme_code"].astype(str).str.strip() == term_str, ["nav", "date"]]
+            if not res.empty:
+                return res.iloc[0]
+        isin_cols = [c for c in ["isin1", "isin2"] if c in nav_df.columns]
+        if isin_cols:
+            mask = pd.Series(False, index=nav_df.index)
+            for col in isin_cols:
+                mask = mask | (nav_df[col].astype(str).str.strip().str.upper() == term_upper)
+            res = nav_df.loc[mask, ["nav", "date"]]
+            if not res.empty:
+                return res.iloc[0]
+        if "scheme_name" in nav_df.columns:
+            res = nav_df.loc[nav_df["scheme_name"].astype(str).str.strip().str.lower() == term_lower, ["nav", "date"]]
+            if not res.empty:
+                return res.iloc[0]
+        if "scheme_name" in nav_df.columns and len(term_lower) >= 3:
+            res = nav_df.loc[nav_df["scheme_name"].astype(str).str.lower().str.contains(term_lower, na=False, regex=False), ["nav", "date"]]
+            if not res.empty:
+                return res.iloc[0]
+            short_term = term_lower[:15]
+            res = nav_df.loc[nav_df["scheme_name"].astype(str).str.lower().str.contains(short_term, na=False, regex=False), ["nav", "date"]]
+            if not res.empty:
+                return res.iloc[0]
+    return None
+
+@st.cache_data(ttl=1800)
+def fetch_yf_mf_nav(symbol, country="INDIA"):
+    return get_stock_price(symbol, country)
+
+def get_nav(nav_df, fund_name, fallback_name=None, country="INDIA"):
+    res = _find_nav_in_df(nav_df, fund_name, fallback_name)
+    if res is not None:
+        return res
+    yf_nav = fetch_yf_mf_nav(fund_name, country) or (fetch_yf_mf_nav(fallback_name, country) if fallback_name else None)
+    if yf_nav is not None:
+        return {"nav": yf_nav, "date": "Live (Yahoo)"}
+    return None
+
+def resolve_asset_ltp(item, nav_df):
+    """
+    Returns the Last Traded Price (LTP) / NAV for an asset item.
+    - Listed Equity: Live stock price via yfinance, fallback to DB LTP.
+    - Mutual Fund: Live NAV via AMFI data, fallback to DB LTP.
+    - Unlisted Stock / Other: DB LTP.
+    """
+    sym = item.get("Symbol", "")
+    name = item.get("Name", "")
+    is_eq = item.get("Equity", True)
+    is_lst = item.get("Listed", True)
+    country = item.get("Country", "INDIA")
+    db_ltp = item.get("LTP")
+
+    if is_lst:
+        if is_eq:
+            price = get_stock_price(sym, country)
+            if price is not None:
+                try:
+                    return float(price)
+                except (ValueError, TypeError):
+                    pass
+            if db_ltp is not None:
+                try:
+                    return float(db_ltp)
+                except (ValueError, TypeError):
+                    pass
+        else:
+            # Mutual Fund: Check AMFI in-memory dataset FIRST (< 1ms)
+            nav_res = _find_nav_in_df(nav_df, sym, name)
+            if nav_res is not None:
+                try:
+                    return float(nav_res["nav"])
+                except (ValueError, TypeError, KeyError):
+                    pass
+            # Fallback to yfinance if non-numeric symbol
+            if sym and not str(sym).isdigit():
+                price = get_stock_price(sym, country)
+                if price is not None:
+                    return float(price)
+            if db_ltp is not None:
+                try:
+                    return float(db_ltp)
+                except (ValueError, TypeError):
+                    pass
+    else:
+        # Unlisted stock
+        if db_ltp is not None:
+            try:
+                return float(db_ltp)
+            except (ValueError, TypeError):
+                pass
+
+    return None
+
 
 from concurrent.futures import ThreadPoolExecutor
 
-@st.cache_data(ttl=600)
-def get_stock_price(symbol):
-    price = None
-    if yf and symbol:
-        for suffix in [".NS", ".BO", ""]:
-            try:
-                ticker = yf.Ticker(symbol + suffix)
-                p = ticker.fast_info.last_price
-                if p and p > 0:
-                    price = float(p)
-                    return price
-            except Exception:
-                continue
+@st.cache_data(ttl=1800)
+def get_stock_price(symbol, country="INDIA"):
+    if not yf or not symbol:
+        return None
+    s = str(symbol).strip()
+    if not s or s.isdigit() or s.upper() in ("NA", "NONE", ""):
+        return None
+
+    country_upper = str(country).upper() if country else "INDIA"
+    if s.endswith((".NS", ".BO")):
+        targets = [s]
+    elif s.startswith("0P"):
+        targets = [s + ".BO", s]
+    elif country_upper == "USA":
+        targets = [s]
+    else:
+        targets = [s + ".NS", s + ".BO", s]
+
+    for t_str in targets:
+        try:
+            ticker = yf.Ticker(t_str)
+            p = getattr(ticker.fast_info, "last_price", None)
+            if p and p > 0:
+                return float(p)
+            if t_str.startswith("0P"):
+                hist = ticker.history(period="5d")
+                if not hist.empty and "Close" in hist.columns:
+                    series = hist["Close"].dropna()
+                    if not series.empty:
+                        val = float(series.iloc[-1])
+                        if val > 0:
+                            return val
+        except Exception:
+            continue
+        if s.endswith((".NS", ".BO")):
+            break
             
-    return price
+    return None
 
 
-def batch_fetch_stock_prices(symbols):
-    """Pre-fetch stock prices for multiple symbols in parallel using ThreadPoolExecutor."""
-    unique_syms = [s for s in set(symbols) if s]
-    if not unique_syms or not yf:
+def batch_fetch_stock_prices(stocks_list):
+    """Pre-fetch stock prices for multiple assets in parallel using ThreadPoolExecutor."""
+    if not stocks_list or not yf:
         return
-    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
-        list(executor.map(get_stock_price, unique_syms))
+    items_to_fetch = [
+        s for s in stocks_list
+        if isinstance(s, dict) and s.get("Symbol") and s.get("Listed", True) and not str(s.get("Symbol", "")).isdigit()
+    ]
+    if not items_to_fetch:
+        return
+
+    def _worker(item):
+        sym = item.get("Symbol")
+        country = item.get("Country", "INDIA")
+        get_stock_price(sym, country)
+
+    with ThreadPoolExecutor(max_workers=min(25, len(items_to_fetch))) as executor:
+        list(executor.map(_worker, items_to_fetch))
 
 
 st.title("Asset Management")
@@ -80,23 +214,16 @@ if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.stop()
 
-@st.cache_data(ttl=300)
-def load_stock_mgmt_db_data():
-    return (
-        db.fetch_sectors(),
-        db.fetch_stocks(),
-        db.fetch_currency_pairs()
-    )
-    
-with st.spinner("Loading Database data..."):
-    sectors_data, stocks_data, currency_pairs_data = load_stock_mgmt_db_data()
+# -----------------------------------------------
+# Load Data from Central Cache
+# -----------------------------------------------
+from Config.data_cache import get_global_app_data, refresh_all_data, get_stock_price, get_nav, resolve_asset_ltp
 
-    # Parallel pre-fetch stock prices for all listed stocks
-    all_symbols = [
-        s.get("Symbol") for s in stocks_data
-        if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
-    ]
-    batch_fetch_stock_prices(all_symbols)
+app_data = get_global_app_data()
+sectors_data        = app_data.get("sectors", [])
+stocks_data         = app_data.get("stocks", [])
+currency_pairs_data = app_data.get("currency_pairs", [])
+nav_df              = app_data.get("nav_df", pd.DataFrame())
 
 existing_sectors = [s.get('Sector', '') for s in sectors_data if s.get('Sector')]
 existing_symbols = [s.get('Symbol', '').upper() for s in stocks_data if s.get('Symbol')]
@@ -104,9 +231,6 @@ existing_symbols = [s.get('Symbol', '').upper() for s in stocks_data if s.get('S
 available_countries = sorted([cp.get('Country') for cp in currency_pairs_data if cp.get('Country')])
 if not available_countries:
     available_countries = ["INDIA"]
-
-# Load MF data silently into cache
-nav_df = load_nav_data()
 
 # Pre-fill from session state if available
 if 'selected_mf' not in st.session_state:
@@ -121,6 +245,11 @@ if 'selected_stock_country' not in st.session_state:
 
 if 'add_asset_type' not in st.session_state:
     st.session_state.add_asset_type = "Stock"
+
+if 'search_existing_query' not in st.session_state:
+    st.session_state.search_existing_query = ""
+if 'edit_target_symbol' not in st.session_state:
+    st.session_state.edit_target_symbol = ""
 
 
 
@@ -170,19 +299,29 @@ def search_yahoo_stocks(query):
     import ssl
     try:
         encoded_query = urllib.parse.quote(query)
-        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={encoded_query}&quotesCount=10&newsCount=0"
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={encoded_query}&quotesCount=50&newsCount=0"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         context = ssl._create_unverified_context()
-        with urllib.request.urlopen(req, context=context, timeout=5) as response:
+        with urllib.request.urlopen(req, context=context, timeout=8) as response:
             data = json.loads(response.read().decode('utf-8'))
             return data.get("quotes", [])
     except Exception:
         return []
 
-@st.dialog("Search Stock / Mutual Fund Info")
+@st.dialog("Search Stock / Mutual Fund Info", width="large")
 def search_stock_dialog():
     query = st.text_input("Enter Company, Mutual Fund, or Ticker (e.g. Infosys, Axis Bluechip, AAPL):")
     if query and len(query) >= 2:
+        q_clean = query.strip().lower()
+
+        # Search 0: Existing Portfolio Assets in DB
+        existing_matches = [
+            s for s in stocks_data
+            if q_clean in str(s.get("Name", "")).lower()
+            or q_clean in str(s.get("Symbol", "")).lower()
+            or q_clean in str(s.get("Sector", "")).lower()
+        ]
+
         # Search 1: Yahoo Finance (Stocks/ETFs/Funds)
         with st.spinner("Searching Yahoo Finance..."):
             yf_quotes = search_yahoo_stocks(query)
@@ -190,20 +329,50 @@ def search_stock_dialog():
         # Search 2: AMFI Mutual Funds (Indian MFs)
         amfi_matches = []
         if not nav_df.empty:
-            matches = nav_df[nav_df['scheme_name'].str.contains(query, case=False, na=False)]
+            q_str = query.strip()
+            mask = nav_df['scheme_name'].astype(str).str.contains(q_str, case=False, na=False)
+            if 'scheme_code' in nav_df.columns:
+                mask = mask | nav_df['scheme_code'].astype(str).str.contains(q_str, case=False, na=False)
+            if 'isin1' in nav_df.columns:
+                mask = mask | nav_df['isin1'].astype(str).str.contains(q_str, case=False, na=False)
+            if 'isin2' in nav_df.columns:
+                mask = mask | nav_df['isin2'].astype(str).str.contains(q_str, case=False, na=False)
+            matches = nav_df[mask]
             if not matches.empty:
-                amfi_matches = matches.head(5).to_dict("records")
+                amfi_matches = matches.to_dict("records")
                 
-        if not yf_quotes and not amfi_matches:
+        if not existing_matches and not yf_quotes and not amfi_matches:
             st.warning("No results found. Try a different search term.")
         else:
             st.write(f"Search Results for '{query}':")
+
+            # Display Existing Database Assets
+            if existing_matches:
+                st.markdown(f"##### 📁 Existing Portfolio Assets (in Database) ({len(existing_matches)})")
+                for i, item in enumerate(existing_matches):
+                    sym   = item.get("Symbol", "")
+                    name  = item.get("Name", "")
+                    sec   = item.get("Sector", "Uncategorized")
+                    mcap  = item.get("MarketCap", "NA")
+                    is_eq = item.get("Equity", True)
+                    a_type = "Stock" if is_eq else "Mutual Fund"
+                    ltp_val = resolve_asset_ltp(item, nav_df)
+                    ltp_str = f"₹{ltp_val:,.2f}" if ltp_val is not None else "LTP: N/A"
+
+                    col_info, col_btn = st.columns([4, 1])
+                    with col_info:
+                        st.markdown(f"**{name}** (`{sym}`) — **{ltp_str}** | {sec} | {mcap} ({a_type}) *(Existing)*")
+                    with col_btn:
+                        if st.button("✏️ Edit", key=f"db_edit_sel_{i}_{sym}"):
+                            st.session_state.search_existing_query = sym
+                            st.session_state.edit_target_symbol = sym
+                            st.rerun()
             
             # Display Yahoo Finance Results
             valid_yf_quotes = [q for q in yf_quotes if q.get("symbol") and q.get("quoteType", "") in ("EQUITY", "ETF", "MUTUALFUND")]
             if valid_yf_quotes:
-                st.markdown("##### 📈 Stocks / ETFs (Yahoo Finance)")
-                for i, q in enumerate(valid_yf_quotes[:5]):
+                st.markdown(f"##### 📈 Stocks / ETFs (Yahoo Finance) ({len(valid_yf_quotes)})")
+                for i, q in enumerate(valid_yf_quotes):
                     symbol = q.get("symbol", "")
                     name = q.get("longname") or q.get("shortname") or symbol
                     exchange = q.get("exchDisp", "")
@@ -213,10 +382,14 @@ def search_stock_dialog():
                     with col_info:
                         st.markdown(f"**{name}** (`{symbol}`) — {exchange} ({qtype})")
                     with col_btn:
-                        if st.button("Select", key=f"yf_sel_{i}"):
+                        if st.button("Select", key=f"yf_sel_{i}_{symbol}"):
                             if qtype == "MUTUALFUND":
                                 st.session_state.add_asset_type = "Mutual Fund"
                                 st.session_state.selected_mf = name
+                                clean_s = symbol
+                                if clean_s.endswith((".NS", ".BO")):
+                                    clean_s = clean_s[:-3]
+                                st.session_state.selected_stock_symbol = clean_s
                             else:
                                 st.session_state.add_asset_type = "Stock"
                                 st.session_state.selected_stock_symbol = symbol
@@ -229,17 +402,65 @@ def search_stock_dialog():
             
             # Display AMFI Results
             if amfi_matches:
-                st.markdown("##### 📊 Mutual Funds (AMFI India)")
+                st.markdown(f"##### 📊 Mutual Funds (AMFI India) ({len(amfi_matches)})")
                 for i, row in enumerate(amfi_matches):
                     scheme_name = row.get("scheme_name", "")
+                    scheme_code = row.get("scheme_code", "")
                     col_info, col_btn = st.columns([4, 1])
                     with col_info:
-                        st.markdown(f"**{scheme_name}**")
+                        code_str = f" (`{scheme_code}`)" if pd.notna(scheme_code) and scheme_code else ""
+                        st.markdown(f"**{scheme_name}**{code_str}")
                     with col_btn:
-                        if st.button("Select", key=f"amfi_sel_{i}"):
+                        if st.button("Select", key=f"amfi_sel_{i}_{scheme_code}"):
                             st.session_state.add_asset_type = "Mutual Fund"
                             st.session_state.selected_mf = scheme_name
+                            st.session_state.selected_stock_symbol = str(scheme_code) if scheme_code else ""
                             st.rerun()
+
+@st.dialog("Search Yahoo Finance", width="large")
+def search_yf_for_asset_dialog(target_sym, target_name):
+    st.write(f"Search Yahoo Finance to look up ticker / price info for **{target_name or target_sym}**.")
+    search_q = st.text_input("Yahoo Finance Search Query:", value=target_name or target_sym, key=f"yf_q_in_{target_sym}")
+    if search_q and len(search_q.strip()) >= 2:
+        with st.spinner("Searching Yahoo Finance..."):
+            quotes = search_yahoo_stocks(search_q.strip())
+        
+        valid_quotes = [q for q in quotes if q.get("symbol") and q.get("quoteType") in ("EQUITY", "ETF", "MUTUALFUND")]
+        if not valid_quotes:
+            st.warning(f"No Yahoo Finance results found for '{search_q}'. Try another symbol or company name.")
+        else:
+            st.markdown(f"##### 📈 Search Results (Yahoo Finance) ({len(valid_quotes)}):")
+            for i, q in enumerate(valid_quotes):
+                symbol   = q.get("symbol", "")
+                q_name   = q.get("longname") or q.get("shortname") or symbol
+                exchange = q.get("exchDisp", "")
+                qtype    = q.get("quoteType", "")
+                
+                clean_sym = symbol
+                if clean_sym.endswith(".NS"):
+                    clean_sym = clean_sym[:-3]
+                elif clean_sym.endswith(".BO"):
+                    clean_sym = clean_sym[:-3]
+                
+                col_info, col_btn = st.columns([3, 1])
+                with col_info:
+                    st.markdown(f"**{q_name}** (`{symbol}`) — {exchange} ({qtype})")
+                with col_btn:
+                    if st.button("Apply Ticker", key=f"apply_yf_{i}_{target_sym}_{symbol}"):
+                        is_india = ("NSE" in exchange.upper() or "BSE" in exchange.upper() or symbol.endswith(".NS") or symbol.endswith(".BO"))
+                        c_country = "INDIA" if is_india else "USA"
+                        
+                        if target_sym == "add_new":
+                            st.session_state.add_asset_type = "Mutual Fund" if qtype == "MUTUALFUND" else "Stock"
+                            st.session_state.selected_stock_symbol = clean_sym
+                            st.session_state.selected_stock_name = q_name
+                            st.session_state.selected_stock_country = c_country
+                        else:
+                            st.session_state[f"applied_yf_sym_{target_sym}"] = clean_sym
+                            st.session_state[f"applied_yf_name_{target_sym}"] = q_name
+                            st.session_state[f"applied_yf_country_{target_sym}"] = c_country
+                            st.session_state.edit_target_symbol = target_sym
+                        st.rerun()
 
 @st.dialog("Clean up Assets", width="large")
 def cleanup_assets_dialog():
@@ -301,6 +522,7 @@ def cleanup_assets_dialog():
                     "Select": False,
                     "Symbol": s.get("Symbol", ""),
                     "Name": s.get("Name", ""),
+                    "LTP": f"₹{resolve_asset_ltp(s, nav_df):,.2f}" if resolve_asset_ltp(s, nav_df) is not None else "N/A",
                     "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
                     "Sector": s.get("Sector", "NA"),
                     "Market Cap": s.get("MarketCap", "NA")
@@ -320,7 +542,7 @@ def cleanup_assets_dialog():
                         default=False,
                     )
                 },
-                disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
+                disabled=["Symbol", "Name", "LTP", "Asset Type", "Sector", "Market Cap"],
                 key="cleanup_delete_table"
             )
 
@@ -388,6 +610,7 @@ def cleanup_assets_dialog():
                         "Select": False,
                         "Symbol": s.get("Symbol", ""),
                         "Name": s.get("Name", ""),
+                        "LTP": f"₹{resolve_asset_ltp(s, nav_df):,.2f}" if resolve_asset_ltp(s, nav_df) is not None else "N/A",
                         "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
                         "Sector": s.get("Sector", "NA"),
                         "Market Cap": s.get("MarketCap", "NA")
@@ -407,7 +630,7 @@ def cleanup_assets_dialog():
                             default=False,
                         )
                     },
-                    disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
+                    disabled=["Symbol", "Name", "LTP", "Asset Type", "Sector", "Market Cap"],
                     key="cleanup_active_table"
                 )
 
@@ -472,6 +695,7 @@ def cleanup_assets_dialog():
                         "Select": False,
                         "Symbol": s.get("Symbol", ""),
                         "Name": s.get("Name", ""),
+                        "LTP": f"₹{resolve_asset_ltp(s, nav_df):,.2f}" if resolve_asset_ltp(s, nav_df) is not None else "N/A",
                         "Asset Type": "Stock" if s.get("Equity", True) else "Mutual Fund",
                         "Sector": s.get("Sector", "NA"),
                         "Market Cap": s.get("MarketCap", "NA")
@@ -491,7 +715,7 @@ def cleanup_assets_dialog():
                             default=False,
                         )
                     },
-                    disabled=["Symbol", "Name", "Asset Type", "Sector", "Market Cap"],
+                    disabled=["Symbol", "Name", "LTP", "Asset Type", "Sector", "Market Cap"],
                     key="cleanup_inactive_table"
                 )
 
@@ -633,6 +857,13 @@ st.divider()
 # ==================== Add a New Stock/MF ====================
 st.subheader("Add a New Stock / Mutual Fund")
 
+col_add_hdr1, col_add_hdr2 = st.columns([3, 1])
+with col_add_hdr1:
+    st.caption("Fill in asset details below or search Yahoo Finance to pre-fill info.")
+with col_add_hdr2:
+    if st.button("🔍 Search Yahoo Finance for Ticker", key="btn_search_yf_add", use_container_width=True):
+        search_yf_for_asset_dialog("add_new", st.session_state.get("selected_stock_name") or st.session_state.get("selected_stock_symbol") or "")
+
 # Radio buttons outside form so they can conditionally render the form fields
 asset_type = st.radio("Asset Type", options=["Stock", "Mutual Fund"], horizontal=True, key="add_asset_type")
 
@@ -770,11 +1001,46 @@ st.subheader("Current Portfolio Assets")
 if not stocks_data:
     st.info("No stocks or mutual funds found in the database. Use the form above to add your first asset!")
 else:
+    col_s1, col_s2 = st.columns([3, 1])
+    with col_s1:
+        search_asset_query = st.text_input(
+            "🔍 Search Existing Assets for Updating / Viewing",
+            value=st.session_state.get("search_existing_query", ""),
+            placeholder="Type Name, Symbol, Sector, or Market Cap...",
+            key="existing_asset_search_input"
+        )
+        st.session_state.search_existing_query = search_asset_query
+    with col_s2:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("Clear Filter", use_container_width=True, key="clear_asset_search"):
+            st.session_state.search_existing_query = ""
+            st.session_state.edit_target_symbol = ""
+            st.rerun()
+
+    display_stocks_data = stocks_data
+    if search_asset_query.strip():
+        sq = search_asset_query.strip().lower()
+        display_stocks_data = [
+            item for item in stocks_data
+            if sq in str(item.get("Name", "")).lower()
+            or sq in str(item.get("Symbol", "")).lower()
+            or sq in str(item.get("Sector", "")).lower()
+            or sq in str(item.get("MarketCap", "")).lower()
+        ]
+        if not display_stocks_data:
+            st.info(f"No existing assets matched '{search_asset_query}'.")
+
+    target_edit_sym = st.session_state.get("edit_target_symbol", "").upper()
+    if target_edit_sym:
+        target_item = next((item for item in stocks_data if item.get("Symbol", "").upper() == target_edit_sym), None)
+        if target_item:
+            st.success(f"✏️ Selected **{target_item.get('Name')}** (`{target_edit_sym}`) for updating.")
+
     market_cap_options = ["Large Cap", "Mid Cap", "Small Cap", "Multi Cap", "ETF", "NA"]
 
     # Group assets by Sector
     assets_by_sector = {}
-    for item in stocks_data:
+    for item in display_stocks_data:
         sec = item.get("Sector") or "Uncategorized"
         if sec not in assets_by_sector:
             assets_by_sector[sec] = []
@@ -808,31 +1074,48 @@ else:
 
             a_type   = "Stock" if is_eq else "Mutual Fund"
             l_status = "Listed" if is_lst else "Unlisted"
-            ltp      = item.get("LTP")
+            ltp_val  = resolve_asset_ltp(item, nav_df)
+            ltp_str  = f"₹{ltp_val:,.2f}" if ltp_val is not None else "LTP: N/A"
             current_country = item.get("Country", "INDIA")
             
             # Adding a visual tag for Asset type and Listing status
             color_tag = "#3B82F6" if a_type == "Stock" else "#4ADE80"
-            
-            with st.expander(f"{name} ({sym}) — {mcap}"):
+            is_auto_expanded = (target_edit_sym and sym.upper() == target_edit_sym) or (len(display_stocks_data) == 1)
+
+            with st.expander(f"{name} ({sym}) — {ltp_str} | {mcap}", expanded=is_auto_expanded):
+                ltp_badge = f'<span style="background-color: #F59E0B20; color: #F59E0B; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">LTP: ₹{ltp_val:,.2f}</span>' if ltp_val is not None else '<span style="background-color: #EF444420; color: #EF4444; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">LTP: N/A</span>'
                 st.markdown(
                     f"""
                     <div style="display: flex; gap: 10px; margin-bottom: 15px;">
                         <span style="background-color: {color_tag}20; color: {color_tag}; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">{a_type}</span>
                         <span style="background-color: #4B556350; color: #9CA3AF; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{l_status}</span>
                         <span style="background-color: #6366F120; color: #818CF8; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">{sec}</span>
-                        {f'<span style="background-color: #F59E0B20; color: #F59E0B; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">LTP: ₹{ltp}</span>' if ltp is not None else ''}
+                        {ltp_badge}
                     </div>
                     """, unsafe_allow_html=True
                 )
                 tab_edit, tab_delete = st.tabs(["✏️ Edit", "🗑️ Delete"])
 
                 with tab_edit:
+                    applied_sym = st.session_state.get(f"applied_yf_sym_{sym}", sym)
+                    applied_name = st.session_state.get(f"applied_yf_name_{sym}", name)
+                    applied_country = st.session_state.get(f"applied_yf_country_{sym}", current_country)
+
+                    col_yf1, col_yf2 = st.columns([3, 1])
+                    with col_yf1:
+                        if st.session_state.get(f"applied_yf_sym_{sym}"):
+                            st.success(f"Applied Yahoo Finance ticker: `{applied_sym}` ({applied_name})")
+                        else:
+                            st.caption(f"Search Yahoo Finance specifically for `{sym}` to update ticker/name.")
+                    with col_yf2:
+                        if st.button("🔍 Search Yahoo Finance", key=f"btn_search_yf_{sym}", use_container_width=True):
+                            search_yf_for_asset_dialog(sym, name)
+
                     # Country selector outside the form
                     edit_country_pre = st.selectbox(
                         "Country",
                         options=available_countries,
-                        index=available_countries.index(current_country) if current_country in available_countries else 0,
+                        index=available_countries.index(applied_country) if applied_country in available_countries else 0,
                         key=f"edit_country_pre_{sym}"
                     )
 
@@ -841,11 +1124,11 @@ else:
                         with ec1:
                             new_sym_input = st.text_input(
                                 "Symbol",
-                                value=sym
+                                value=applied_sym
                             )
                             new_name = st.text_input(
                                 "Name",
-                                value=name
+                                value=applied_name
                             )
                             new_mcap = st.selectbox(
                                 "Market Cap",
@@ -858,8 +1141,9 @@ else:
                                 options=existing_sectors,
                                 index=existing_sectors.index(sec) if sec in existing_sectors else 0
                             )
+                            db_ltp = item.get("LTP")
                             if not is_lst or is_eq:
-                                 new_ltp = st.number_input("Last Traded Price (LTP)", value=float(ltp or 0.0), min_value=0.0, step=0.1, key=f"ltp_edit_{sym}")
+                                 new_ltp = st.number_input("Last Traded Price (LTP)", value=float(db_ltp or ltp_val or 0.0), min_value=0.0, step=0.1, key=f"ltp_edit_{sym}")
                             else:
                                  new_ltp = None
                                  
@@ -876,6 +1160,10 @@ else:
 
                         save_btn = st.form_submit_button("💾 Save Changes", type="primary")
                         if save_btn:
+                            st.session_state.pop(f"applied_yf_sym_{sym}", None)
+                            st.session_state.pop(f"applied_yf_name_{sym}", None)
+                            st.session_state.pop(f"applied_yf_country_{sym}", None)
+
                             new_is_eq  = new_asset_type == "Stock"
                             new_is_lst = True if new_asset_type == "Mutual Fund" else (new_listing == "Listed")
                             new_s = new_sym_input.strip()
