@@ -5,102 +5,17 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import yfinance as yf
 except ImportError:
     yf = None
 
-# -----------------------------------------------
-# NAV helpers
-# -----------------------------------------------
-@st.cache_data(ttl=18000)
-def _fetch_nav_data_cached():
-    import urllib.request
-    import ssl
-    req = urllib.request.Request(
-        "https://www.amfiindia.com/spages/NAVAll.txt",
-        headers={'User-Agent': 'Mozilla/5.0'}
-    )
-    context = ssl._create_unverified_context()
-    with urllib.request.urlopen(req, context=context) as response:
-        return pd.read_csv(
-            response,
-            sep=";",
-            header=None,
-            names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
-            on_bad_lines="skip"
-        )
-
-def load_nav_data():
-    try:
-        return _fetch_nav_data_cached()
-    except Exception:
-        return pd.DataFrame()
-
-def get_nav(nav_df, fund_name, fallback_name=None):
-    if nav_df.empty or not fund_name:
-        if fallback_name:
-            return get_nav(nav_df, fallback_name)
-        return None
-
-    fund_str = str(fund_name).strip()
-    res = nav_df.loc[nav_df["scheme_name"].eq(fund_str), ["nav"]]
-    if not res.empty:
-        return res.iloc[0]["nav"]
-
-    res = nav_df.loc[nav_df["scheme_name"].str.lower() == fund_str.lower(), ["nav"]]
-    if not res.empty:
-        return res.iloc[0]["nav"]
-
-    if len(fund_str) >= 3:
-        short_name = fund_str[:15].lower()
-        res = nav_df.loc[nav_df["scheme_name"].str.lower().str.contains(short_name, na=False, regex=False), ["nav"]]
-        if not res.empty:
-            return res.iloc[0]["nav"]
-
-    if fallback_name:
-        return get_nav(nav_df, fallback_name)
-
-    return None
-
-from concurrent.futures import ThreadPoolExecutor
-
-# -----------------------------------------------
-# Stock price helper
-# -----------------------------------------------
-@st.cache_data(ttl=600)
-def get_stock_info(symbol):
-    price = None
-    pe = None
-
-    if yf and symbol:
-        for suffix in [".NS", ".BO", ""]:
-            try:
-                ticker = yf.Ticker(symbol + suffix)
-                p = ticker.fast_info.last_price
-                if p and p > 0:
-                    price = float(p)
-                    try:
-                        pe_raw = ticker.info.get("trailingPE")
-                        if pe_raw is not None:
-                            pe = float(pe_raw)
-                    except Exception:
-                        pass
-                    return price, pe
-            except Exception:
-                continue
-
-    return price, pe
-
-
-def batch_fetch_stock_info(symbols):
-    """Pre-fetch stock info for multiple symbols in parallel using ThreadPoolExecutor."""
-    unique_syms = [s for s in set(symbols) if s]
-    if not unique_syms or not yf:
-        return
-    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
-        list(executor.map(get_stock_info, unique_syms))
+from Config.data_cache import (
+    get_global_app_data, refresh_all_data, get_stock_price,
+    get_stock_info, get_nav, resolve_asset_ltp
+)
 
 # -----------------------------------------------
 # FX helpers (same logic as Dashboard.py)
@@ -210,7 +125,12 @@ def convert_price(native_price, country, currency_pairs_map, fx_rates):
     """
     use_usd = st.session_state.get("view_in_usd", False)
     country = (country or "INDIA").upper()
-    inr_price = native_price * _inr_per_unit(country, currency_pairs_map, fx_rates)
+    try:
+        val = float(native_price or 0.0)
+    except (ValueError, TypeError):
+        val = 0.0
+    rate = _inr_per_unit(country, currency_pairs_map, fx_rates)
+    inr_price = val * (rate if rate is not None else 1.0)
 
     if not use_usd:
         return inr_price
@@ -237,36 +157,18 @@ if not db.is_configured():
     st.stop()
 
 # -----------------------------------------------
-# Load data
+# Load data from central cache
 # -----------------------------------------------
-@st.cache_data(ttl=300)
-def load_portfolio_db_data():
-    return (
-        db.fetch_stocks(),
-        db.fetch_open_transactions(),
-        db.fetch_stock_allocations(),
-        db.fetch_allocations(),
-        db.fetch_investment_plan(),
-        db.fetch_currency_pairs()
-    )
+from Config.data_cache import get_global_app_data, refresh_all_data, get_stock_info, get_nav, resolve_asset_ltp
 
-with st.spinner("Loading portfolio data and live market prices..."):
-    (
-        db_stocks,
-        open_transactions,
-        db_stock_allocations,
-        db_sector_allocations,
-        db_investment_plan,
-        db_currency_pairs
-    ) = load_portfolio_db_data()
-    nav_df = load_nav_data()
-
-    # Parallel pre-fetch all stock prices concurrently
-    all_equity_symbols = [
-        s.get("Symbol") for s in db_stocks
-        if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
-    ]
-    batch_fetch_stock_info(all_equity_symbols)
+app_data = get_global_app_data()
+db_stocks             = app_data.get("stocks", [])
+open_transactions     = app_data.get("open_transactions", [])
+db_stock_allocations  = app_data.get("stock_allocations", [])
+db_sector_allocations = app_data.get("allocations", [])
+db_investment_plan    = app_data.get("investment_plan", [])
+db_currency_pairs     = app_data.get("currency_pairs", [])
+nav_df                = app_data.get("nav_df", pd.DataFrame())
 
 # Build currency maps
 currency_pairs_map = {
@@ -496,7 +398,7 @@ with top_col1:
     st.checkbox("View in USD", value=st.session_state.view_in_usd, on_change=toggle_usd, key="portfolio_usd_cb")
 with top_col2:
     if st.button("🔄 Refresh Data", use_container_width=True, help="Reload live market prices and portfolio data"):
-        st.cache_data.clear()
+        refresh_all_data()
         st.rerun()
 with top_col3:
     if st.button("📊 Merged Data", use_container_width=True, help="View consolidated portfolio data filtered by Broker and Asset Type"):
@@ -571,7 +473,7 @@ def get_portfolio_display_data(port_stocks, port_open_transactions, nav_df,
                 native_price = fetched_price if fetched_price is not None else 0.0
                 pe_ratio     = fetched_pe
             else:
-                fetched_nav = get_nav(nav_df, sym)
+                fetched_nav = get_nav(nav_df, sym, name)
                 native_price = float(fetched_nav) if fetched_nav is not None else 0.0
                 if native_price == 0.0:
                     fetched_price, _ = get_stock_info(sym)

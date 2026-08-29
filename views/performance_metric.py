@@ -135,8 +135,10 @@ st.divider()
 # ==================== Monthly Buy Value of Open Transactions ====================
 st.subheader("Monthly Buy Value of Open Transactions (INR)")
 
-with st.spinner("Loading Transaction Details..."):
-    all_transactions = db.fetch_all_transactions()
+from Config.data_cache import get_global_app_data, refresh_all_data
+
+app_data = get_global_app_data()
+all_transactions = app_data.get("all_transactions", [])
 
 if all_transactions:
     df_tx = pd.DataFrame(all_transactions)

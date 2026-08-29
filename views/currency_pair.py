@@ -13,8 +13,13 @@ if not db.is_configured():
     st.warning("⚠️ Supabase credentials not found!")
     st.stop()
 
-with st.spinner("Loading currency pairs..."):
-    currency_pairs_data = db.fetch_currency_pairs()
+# -----------------------------------------------
+# Load Data from Central Cache
+# -----------------------------------------------
+from Config.data_cache import get_global_app_data, refresh_all_data
+
+app_data = get_global_app_data()
+currency_pairs_data = app_data.get("currency_pairs", [])
 
 # Extract existing countries to prevent duplicates
 existing_countries = [cp.get('Country', '').upper() for cp in currency_pairs_data if cp.get('Country')]

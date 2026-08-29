@@ -39,12 +39,15 @@ if not db.is_configured():
     st.info("Please set your credentials directly inside the init method of `Config/supabase_client.py`.")
     st.stop()
     
-# Always fetch fresh data from the DB on load instead of session state
-# This ensures multiple users/tabs stay in sync with the database
-with st.spinner("Loading sectors..."):
-    sectors_data = db.fetch_sectors()
-    stocks_data = db.fetch_stocks()
-    allocations_data = db.fetch_allocations()
+# -----------------------------------------------
+# Load Data from Central Cache
+# -----------------------------------------------
+from Config.data_cache import get_global_app_data, refresh_all_data
+
+app_data = get_global_app_data()
+sectors_data     = app_data.get("sectors", [])
+stocks_data      = app_data.get("stocks", [])
+allocations_data = app_data.get("allocations", [])
 
 # Given there's only one column 'Sector', we extract those directly
 existing_names = [s.get('Sector', '').lower() for s in sectors_data]

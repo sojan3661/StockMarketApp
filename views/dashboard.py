@@ -7,6 +7,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import yfinance as yf
@@ -33,96 +34,26 @@ if not db.is_configured():
 
 col1, col2 = st.columns([2, 8])
 with col1:
-    if st.button("🔄 Refresh Data", help="Reload live prices from NSE"):
-        for k in list(st.session_state.keys()):
-            if k.startswith("port_df_"):
-                del st.session_state[k]
-        st.cache_data.clear()
-        st.rerun()
+    if st.button("🔄 Refresh Data", help="Reload live prices and allocations"):
+        refresh_all_data()
 
 with col2:
     st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
     st.checkbox("View in USD", value=st.session_state.view_in_usd, on_change=toggle_usd, key="dashboard_usd_cb")
 
 # -----------------------------------------------
-# Cache helpers
+# Load data from central cache
 # -----------------------------------------------
-@st.cache_data(ttl=18000)
-def _fetch_nav_data_cached():
-    import urllib.request
-    import ssl
-    req = urllib.request.Request(
-        "https://www.amfiindia.com/spages/NAVAll.txt",
-        headers={'User-Agent': 'Mozilla/5.0'}
-    )
-    context = ssl._create_unverified_context()
-    with urllib.request.urlopen(req, context=context) as response:
-        return pd.read_csv(
-            response,
-            sep=";", header=None,
-            names=["scheme_code", "isin1", "isin2", "scheme_name", "nav", "date"],
-            on_bad_lines="skip"
-        )
+from Config.data_cache import get_global_app_data, refresh_all_data, get_stock_price, get_stock_info, get_nav, resolve_asset_ltp, calculate_open_capital_gains
 
-def load_nav_data():
-    try:
-        return _fetch_nav_data_cached()
-    except Exception:
-        return pd.DataFrame()
-
-
-def get_nav(nav_df, fund_name):
-    if nav_df.empty or not fund_name:
-        return 0.0
-
-    res = nav_df.loc[nav_df["scheme_name"].eq(fund_name), ["nav"]]
-    if not res.empty:
-        return float(res.iloc[0]["nav"])
-
-    res = nav_df.loc[nav_df["scheme_name"].str.lower() == fund_name.lower(), ["nav"]]
-    if not res.empty:
-        return float(res.iloc[0]["nav"])
-
-    short_name = fund_name[:15].lower()
-    res = nav_df.loc[nav_df["scheme_name"].str.lower().str.contains(short_name, na=False, regex=False), ["nav"]]
-    if not res.empty:
-        return float(res.iloc[0]["nav"])
-
-    return 0.0
-
-
-@st.cache_data(ttl=600)
-def get_stock_info(symbol):
-    """Returns (price, pe_ratio) for a stock. Price is always in its native currency."""
-    price = None
-    pe = None
-
-    if yf:
-        for suffix in [".NS", ".BO", ""]:
-            try:
-                ticker = yf.Ticker(symbol + suffix)
-                p = ticker.fast_info.last_price
-                if p and p > 0:
-                    price = float(p)
-                    pe_raw = ticker.info.get("trailingPE")
-                    if pe_raw is not None:
-                        pe = float(pe_raw)
-                    return price, pe
-            except Exception:
-                continue
-
-    return price or 0.0, pe
-
-
-from concurrent.futures import ThreadPoolExecutor
-
-def batch_fetch_stock_info(symbols):
-    """Pre-fetch stock info for multiple symbols in parallel using ThreadPoolExecutor."""
-    unique_syms = [s for s in set(symbols) if s]
-    if not unique_syms or not yf:
-        return
-    with ThreadPoolExecutor(max_workers=min(15, len(unique_syms))) as executor:
-        list(executor.map(get_stock_info, unique_syms))
+app_data = get_global_app_data()
+db_stocks          = app_data.get("stocks", [])
+open_tx            = app_data.get("open_transactions", [])
+db_stock_allocs    = app_data.get("stock_allocations", [])
+db_sector_allocs   = app_data.get("allocations", [])
+db_plans           = app_data.get("investment_plan", [])
+db_currency_pairs  = app_data.get("currency_pairs", [])
+nav_df             = app_data.get("nav_df", pd.DataFrame())
 
 
 @st.cache_data(ttl=300)
@@ -172,37 +103,7 @@ def get_index_pe(index_name):
     return 0.0
 
 
-# -----------------------------------------------
-# Load data
-# -----------------------------------------------
-@st.cache_data(ttl=300)
-def load_dashboard_db_data():
-    return (
-        db.fetch_stocks(),
-        db.fetch_open_transactions(),
-        db.fetch_stock_allocations(),
-        db.fetch_allocations(),
-        db.fetch_investment_plan(),
-        db.fetch_currency_pairs()
-    )
 
-with st.spinner("Loading dashboard data..."):
-    (
-        db_stocks,
-        open_tx,
-        db_stock_allocs,
-        db_sector_allocs,
-        db_plans,
-        db_currency_pairs
-    ) = load_dashboard_db_data()
-    nav_df = load_nav_data()
-
-    # Parallel pre-fetch all stock prices concurrently
-    all_equity_symbols = [
-        s.get("Symbol") for s in db_stocks
-        if s.get("Symbol") and s.get("Equity", True) and s.get("Listed", True)
-    ]
-    batch_fetch_stock_info(all_equity_symbols)
 
 plans_list      = db_plans if isinstance(db_plans, list) else ([db_plans] if db_plans else [])
 portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
@@ -293,19 +194,9 @@ def _usdinr():
 
 
 def convert_price(native_price, country):
-    """
-    Convert native_price (in the stock's home currency) to the active display currency.
-
-    INR mode  (view_in_usd = False):
-      INDIA  -> return as-is  (already INR)
-      Other  -> multiply by <BaseCurrency>INR rate  (e.g. GBP * GBPINR)
-
-    USD mode  (view_in_usd = True):
-      INDIA  -> divide by USDINR
-      Other  -> convert to INR first, then divide by USDINR
-    """
     use_usd = st.session_state.get("view_in_usd", False)
     country = (country or "INDIA").upper()
+    native_price = float(native_price or 0.0)
 
     if not use_usd:
         # INR display
@@ -368,7 +259,7 @@ def live_price(stock_info):
     if is_eq:
         native, pe = get_stock_info(sym)
     else:
-        native, pe = get_nav(nav_df, sym), None
+        native, pe = get_nav(nav_df, sym, stock_info.get("Name")), None
 
     return convert_price(native, country), pe
 
@@ -598,30 +489,16 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     m3.metric("📈 Current Value",       f"{currency_symbol}{total_curr_val:,.2f}")
     m4.metric("📊 Gain / Loss",         f"{currency_symbol}{gain_loss:,.2f}", delta=f"{gain_loss_pct:.2f}%")
 
-    # ---- PE Ratio Metrics ----
-    pe_filtered = df[
-        (df["PE Ratio"].notnull()) &
-        (~df["Sector"].str.upper().isin(["DEBT", "ETF/INDEX FUND"]))
-    ]
-    avg_pe = pe_filtered["PE Ratio"].mean() if not pe_filtered.empty else 0.0
+    # ---- Short Term & Long Term Capital Gains (Open Positions) ----
+    target_txs = open_tx if port_label == "All Portfolios" else [t for t in open_tx if t.get("Portfolio") == port_label]
+    live_map = dict(zip(df["Symbol"], df["Live Price"])) if "Symbol" in df.columns and "Live Price" in df.columns else {}
+    cg_dash = calculate_open_capital_gains(target_txs, live_map, currency_pairs_map, fx_rates, use_usd)
 
-    st.markdown("### 📊 Valuation & Index Comparison")
+    cg_col1, cg_col2 = st.columns(2)
+    cg_col1.metric("⏱️ Short-Term Capital Gain (STCG ≤ 1 yr)", f"{currency_symbol}{cg_dash['stcg_gain']:,.2f}", delta=f"{cg_dash['stcg_pct']:+.2f}%")
+    cg_col2.metric("⏳ Long-Term Capital Gain (LTCG > 1 yr)", f"{currency_symbol}{cg_dash['ltcg_gain']:,.2f}", delta=f"{cg_dash['ltcg_pct']:+.2f}%")
 
-    niphy_pe = get_index_pe("NIFTY 50")
-    bank_pe  = get_index_pe("NIFTY BANK")
 
-    col_pe1, col_pe2 = st.columns([1, 2])
-    with col_pe1:
-        st.metric("🎯 Portfolio Avg PE", f"{avg_pe:.2f}")
-    with col_pe2:
-        index_data = {
-            "Index":      ["NIFTY 50", "NIFTY BANK"],
-            "Current PE": [
-                f"{niphy_pe:.2f}" if niphy_pe > 0 else "N/A",
-                f"{bank_pe:.2f}"  if bank_pe  > 0 else "N/A",
-            ]
-        }
-        st.table(pd.DataFrame(index_data))
 
     # Show live FX rates being used
     if use_usd:
@@ -764,32 +641,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     else:
         st.info("No invested data to display for the pie chart yet.")
 
-    st.divider()
 
-    # Asset table
-    if not df.empty and df["Invested"].sum() > 0:
-        st.subheader(f"Assets — {port_label}")
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Symbol":         None,
-                "Portfolio":      None,
-                "Country":        None,
-                "Target Alloc %": None,
-                "Sector Alloc %": None,
-                "Qty":            st.column_config.NumberColumn("Qty",           format="%.4f"),
-                "Invested":       st.column_config.NumberColumn("Invested",       format=money_fmt),
-                "Live Price":     st.column_config.NumberColumn("Live Price",     format=money_fmt),
-                "PE Ratio":       st.column_config.NumberColumn("PE Ratio",       format="%.2f"),
-                "Current Value":  st.column_config.NumberColumn("Current Value",  format=money_fmt),
-                "Running P&L":    st.column_config.NumberColumn("Running P&L",     format=money_fmt),
-                "Running P&L %":  st.column_config.NumberColumn("Running P&L %",   format="%.2f%%"),
-            }
-        )
-    else:
-        st.info(f"No asset data available for {port_label}.")
 
     # ---- Stock-level bar chart ----
     can_show_stock_bar = (port_expected_map is not None and "Portfolio" in df.columns) or total_expected > 0

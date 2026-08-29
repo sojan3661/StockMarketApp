@@ -11,6 +11,10 @@ def inject_custom_css():
 
 inject_custom_css()
 
+# Pre-load & cache global application data
+from Config.data_cache import get_global_app_data
+get_global_app_data()
+
 dashboard = st.Page("views/dashboard.py", title="Dashboard", icon="🏠")
 build_portfolio = st.Page("views/build_portfolio.py", title="Build Portfolio", icon="🏗️")
 sector_management = st.Page("views/sector_management.py", title="Sector Management", icon="📋")
