@@ -39,12 +39,21 @@ else:
     plans_list = db_investment_plan if isinstance(db_investment_plan, list) else [db_investment_plan]
     available_portfolios = sorted([p.get("Portfolio", "") for p in plans_list if p.get("Portfolio", "")])
 
-# Create a list of available symbols from StockManagement
+# Create a list of available symbols and name map from StockManagement
 if not db_stocks:
     available_symbols = []
+    stock_name_map = {}
     st.info("No assets found in your portfolio yet. Go to 'Stock Management' to start adding assets before recording transactions.")
 else:
-    available_symbols = sorted([p.get("Symbol", "") for p in db_stocks if p.get("Symbol", "")])
+    stock_name_map = {
+        s["Symbol"]: (s.get("Name") or s["Symbol"])
+        for s in db_stocks
+        if s.get("Symbol")
+    }
+    available_symbols = sorted(
+        [p.get("Symbol", "") for p in db_stocks if p.get("Symbol", "")],
+        key=lambda sym: stock_name_map.get(sym, sym).lower()
+    )
 
 # -----------------------------
 # Currency Conversion Helpers
@@ -357,17 +366,18 @@ with container:
                 if tx.get("Portfolio") == selected_portfolio and tx.get("Symbol")
             }
             valid_symbols = allocated_symbols.union(open_tx_symbols)
-            filtered_symbols = sorted([
-                s for s in available_symbols
-                if s in valid_symbols
-            ])
+            filtered_symbols = sorted(
+                [s for s in available_symbols if s in valid_symbols],
+                key=lambda sym: stock_name_map.get(sym, sym).lower()
+            )
             options_to_show = filtered_symbols if filtered_symbols else available_symbols
         else:
             options_to_show = available_symbols
 
         selected_symbol = st.selectbox(
-            "Asset Symbol", 
+            "Asset Name", 
             options=options_to_show,
+            format_func=lambda sym: stock_name_map.get(sym, sym),
             help="Select an asset you've already added via Stock Management.",
             key=f"sym_{st.session_state['tx_form_key']}"
         )
@@ -486,7 +496,8 @@ if submitted:
         if success:
             st.session_state["last_selected_portfolio"] = selected_portfolio
             st.session_state["last_transaction_date"] = transaction_date
-            st.success(f"Successfully recorded {transaction_type} of {quantity} {selected_symbol} @ ₹{price}")
+            asset_display_name = stock_name_map.get(selected_symbol, selected_symbol)
+            st.success(f"Successfully recorded {transaction_type} of {quantity} {asset_display_name} @ ₹{price}")
             time.sleep(1.5)
             st.session_state["tx_form_key"] += 1
             st.rerun()
