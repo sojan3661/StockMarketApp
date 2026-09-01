@@ -378,8 +378,162 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
 
 
 
+# -----------------------------
+# Over-Allocated Dialog
+# -----------------------------
+@st.dialog("Over-Allocated Assets", width="large")
+def show_overallocated_dialog(
+    portfolio_names, open_transactions, db_sectors, db_allocations,
+    db_stocks, db_stock_allocations, plans_list, nav_df, currency_pairs_map, fx_rates
+):
+    st.caption("View assets where current invested amount exceeds expected allocation target and calculate quantity to sell/offload.")
+
+    top_col1, _ = st.columns([2, 2])
+    with top_col1:
+        selected_port = st.selectbox(
+            "Filter Portfolio",
+            options=["All Portfolios"] + portfolio_names,
+            key="overalloc_port_select"
+        )
+
+    target_ports = portfolio_names if selected_port == "All Portfolios" else [selected_port]
+
+    tx_df = pd.DataFrame(open_transactions)
+    if not tx_df.empty:
+        if "Portfolio" not in tx_df.columns:
+            tx_df["Portfolio"] = ""
+        tx_agg = (
+            tx_df.groupby(["Portfolio", "Symbol"])
+            .agg({"Qty": "sum", "BuyValue": "sum"})
+            .rename(columns={"BuyValue": "InvestedTotal"})
+            .to_dict("index")
+        )
+    else:
+        tx_agg = {}
+
+    over_allocated_rows = []
+
+    for port_name in target_ports:
+        port_allocations = [a for a in db_allocations if a.get("Portfolio") == port_name]
+        sector_alloc_dict = {
+            alloc["Sector"]: alloc["Allocation"]
+            for alloc in port_allocations
+            if alloc.get("Sector")
+        }
+
+        # Check stock allocations for this portfolio from session state or db
+        alloc_state_key = f"port_stock_allocations_{port_name}"
+        if alloc_state_key in st.session_state:
+            port_stock_allocations = st.session_state[alloc_state_key]
+        else:
+            existing_allocs = {
+                a["Symbol"]: a["Allocation"]
+                for a in db_stock_allocations
+                if a.get("Portfolio") == port_name and a.get("Symbol")
+            }
+            port_stock_allocations = {
+                s["Symbol"]: existing_allocs.get(s["Symbol"], 0.0)
+                for s in db_stocks
+                if s.get("Symbol")
+            }
+
+        plan_details = next((p for p in plans_list if p.get("Portfolio") == port_name), {})
+        monthly_sip = plan_details.get("Monthly SIP") or 0
+        months = plan_details.get("Number of Months") or 0
+        total_expected = plan_details.get("Current Invested Amount", 0) + (monthly_sip * months)
+
+        for sector_row in db_sectors:
+            sec_name = sector_row.get("Sector")
+            target_alloc = sector_alloc_dict.get(sec_name, 0)
+            if not target_alloc or target_alloc <= 0:
+                continue
+
+            sector_stocks = [s for s in db_stocks if s.get("Sector") == sec_name]
+
+            for p in sector_stocks:
+                sym = p.get("Symbol")
+                name = p.get("Name")
+                country = (p.get("Country") or "INDIA").upper()
+
+                alloc = float(port_stock_allocations.get(sym, 0.0))
+
+                agg = tx_agg.get((port_name, sym), {"Qty": 0, "InvestedTotal": 0})
+                qty = float(agg["Qty"])
+                invested = float(agg["InvestedTotal"])
+
+                if invested <= 0 and qty <= 0:
+                    continue
+
+                if p.get("Equity", True):
+                    if p.get("Listed", True):
+                        native_price = get_stock_price(sym)
+                    else:
+                        native_price = float(p.get("LTP") or 0.0)
+                else:
+                    native_price = get_nav(nav_df, sym, name)
+
+                price_inr = to_inr(native_price, country, currency_pairs_map, fx_rates)
+
+                expected = total_expected * (target_alloc / 100) * (alloc / 100)
+
+                if invested - expected > 0.01:
+                    over_amount = invested - expected
+                    # Calculate quantity to sell proportional to holding qty and cap strictly at hold qty
+                    raw_offload = (over_amount / invested) * qty if invested > 0 else 0
+                    if p.get("Equity", True):
+                        offload_qty = min(int(qty), math.ceil(raw_offload))
+                    else:
+                        offload_qty = min(qty, round(raw_offload, 4))
+
+                    offload_qty = max(0, min(qty, offload_qty))
+
+                    over_allocated_rows.append({
+                        "Portfolio": port_name,
+                        "Asset Name": name or sym,
+                        "Symbol": sym,
+                        "Hold Qty": qty,
+                        "Invested (₹)": invested,
+                        "Expected (₹)": expected,
+                        "Over Allocated (₹)": over_amount,
+                        "LTP (₹)": price_inr,
+                        "Qty to Sell": offload_qty,
+                    })
+
+    if not over_allocated_rows:
+        st.success(f"🎉 No over-allocated assets found for '{selected_port}'.")
+        return
+
+    df_over = pd.DataFrame(over_allocated_rows)
+
+    total_over_allocated = df_over["Over Allocated (₹)"].sum()
+    st.markdown(f"**Found {len(df_over)} over-allocated asset(s)** (Total Over-Allocated Amount: **₹{total_over_allocated:,.2f}**):")
+
+    col_config = {
+        "Portfolio": st.column_config.TextColumn("Portfolio", disabled=True),
+        "Asset Name": st.column_config.TextColumn("Asset Name", disabled=True),
+        "Symbol": st.column_config.TextColumn("Symbol", disabled=True),
+        "Hold Qty": st.column_config.NumberColumn("Hold Qty", format="%.4f", disabled=True),
+        "Invested (₹)": st.column_config.NumberColumn("Invested (₹)", format="₹%.2f", disabled=True),
+        "Expected (₹)": st.column_config.NumberColumn("Expected (₹)", format="₹%.2f", disabled=True),
+        "Over Allocated (₹)": st.column_config.NumberColumn("Over Allocated (₹)", format="₹%.2f", disabled=True),
+        "LTP (₹)": st.column_config.NumberColumn("LTP (₹)", format="₹%.2f", disabled=True),
+        "Qty to Sell": st.column_config.NumberColumn("Qty to Sell (Offload)", format="%.4f", disabled=True),
+    }
+
+    if selected_port != "All Portfolios":
+        df_over = df_over.drop(columns=["Portfolio"])
+        col_config.pop("Portfolio", None)
+
+    st.dataframe(
+        df_over,
+        use_container_width=True,
+        hide_index=True,
+        column_config=col_config
+    )
+
+
 # Action Buttons
-col_btn1, col_btn2, _ = st.columns([1, 1, 4])
+col_btn1, col_btn2, col_btn3, _ = st.columns([1, 1.2, 1.4, 2.4])
 with col_btn1:
     if st.button("🔄 Refresh Data", help="Reload live prices and allocations"):
         refresh_all_data()
@@ -387,6 +541,14 @@ with col_btn1:
 with col_btn2:
     if st.button("🔀 Swap Portfolio", help="Move open transactions of an asset between portfolios"):
         show_swap_portfolio_dialog(portfolio_names, open_transactions)
+
+with col_btn3:
+    if st.button("⚖️ Show OverAllocated", help="View over-allocated assets and quantity to sell"):
+        show_overallocated_dialog(
+            portfolio_names, open_transactions, db_sectors, db_allocations,
+            db_stocks, db_stock_allocations, plans_list, nav_df, currency_pairs_map, fx_rates
+        )
+
 
 
 # -----------------------------
