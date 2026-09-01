@@ -210,6 +210,145 @@ def convert_price(native_price, country):
         return inr_price / usd_inr
 
 
+@st.dialog("⏱️ Short-Term Capital Gains (STCG) Transactions", width="large")
+def show_stcg_dialog(tx_data, currency_symbol, total_gain, total_pct):
+    st.markdown(f"**Total STCG Gain:** `{currency_symbol}{total_gain:,.2f}` (`{total_pct:+.2f}%`) | **Open Transactions:** `{len(tx_data)}`")
+    if not tx_data:
+        st.info("No open Short-Term Capital Gains transactions found.")
+        return
+    df_dialog = pd.DataFrame(tx_data)
+    money_fmt = f"{currency_symbol} %.2f"
+    st.dataframe(
+        df_dialog,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Holding (Days)": st.column_config.NumberColumn("Holding (Days)", format="%d"),
+            "Qty":            st.column_config.NumberColumn("Qty", format="%.2f"),
+            "Buy Avg":        st.column_config.NumberColumn("Buy Avg", format=money_fmt),
+            "Invested":       st.column_config.NumberColumn("Invested", format=money_fmt),
+            "Live Price":     st.column_config.NumberColumn("Live Price", format=money_fmt),
+            "Current Value":  st.column_config.NumberColumn("Current Value", format=money_fmt),
+            "Gain / Loss":    st.column_config.NumberColumn("Gain / Loss", format=money_fmt),
+            "Gain / Loss %":  st.column_config.NumberColumn("Gain %", format="%.2f%%"),
+        }
+    )
+
+
+@st.dialog("⏳ Long-Term Capital Gains (LTCG) Transactions", width="large")
+def show_ltcg_dialog(tx_data, currency_symbol, total_gain, total_pct):
+    st.markdown(f"**Total LTCG Gain:** `{currency_symbol}{total_gain:,.2f}` (`{total_pct:+.2f}%`) | **Open Transactions:** `{len(tx_data)}`")
+    if not tx_data:
+        st.info("No open Long-Term Capital Gains transactions found.")
+        return
+    df_dialog = pd.DataFrame(tx_data)
+    money_fmt = f"{currency_symbol} %.2f"
+    st.dataframe(
+        df_dialog,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Holding (Days)": st.column_config.NumberColumn("Holding (Days)", format="%d"),
+            "Qty":            st.column_config.NumberColumn("Qty", format="%.2f"),
+            "Buy Avg":        st.column_config.NumberColumn("Buy Avg", format=money_fmt),
+            "Invested":       st.column_config.NumberColumn("Invested", format=money_fmt),
+            "Live Price":     st.column_config.NumberColumn("Live Price", format=money_fmt),
+            "Current Value":  st.column_config.NumberColumn("Current Value", format=money_fmt),
+            "Gain / Loss":    st.column_config.NumberColumn("Gain / Loss", format=money_fmt),
+            "Gain / Loss %":  st.column_config.NumberColumn("Gain %", format="%.2f%%"),
+        }
+    )
+
+
+def get_capital_gains_tx_details(open_txs, gain_type="stcg", live_price_map=None, stocks_map=None, currency_pairs_map=None, fx_rates=None, use_usd=False):
+    now = pd.Timestamp.now()
+    usd_inr = 84.0
+    if use_usd and currency_pairs_map and fx_rates:
+        cp = currency_pairs_map.get("USA", {})
+        sym = cp.get("Symbol", "") if isinstance(cp, dict) else ""
+        if sym and fx_rates.get(sym):
+            usd_inr = float(fx_rates.get(sym) or 84.0)
+
+    live_map = live_price_map or {}
+    stocks_info = stocks_map or {}
+
+    tx_rows = []
+    for tx in (open_txs or []):
+        sym = tx.get("Symbol", "")
+        if not sym:
+            continue
+
+        sell_avg  = tx.get("SellAvg")
+        sell_date = tx.get("SellDate")
+        is_open   = (
+            (sell_avg  is None or sell_avg  == "" or (isinstance(sell_avg,  float) and pd.isna(sell_avg))) and
+            (sell_date is None or sell_date == "" or (isinstance(sell_date, float) and pd.isna(sell_date)))
+        )
+        if not is_open:
+            continue
+
+        qty = float(tx.get("Qty", 0.0) or 0.0)
+        if qty <= 0:
+            continue
+
+        buy_date_str = tx.get("BuyDate")
+        holding_days = 0
+        is_long = False
+        buy_dt_display = "-"
+        if buy_date_str:
+            try:
+                buy_dt = pd.to_datetime(buy_date_str)
+                if pd.notna(buy_dt):
+                    holding_days = (now - buy_dt).days
+                    buy_dt_display = buy_dt.strftime("%Y-%m-%d")
+                    if holding_days > 365:
+                        is_long = True
+            except Exception:
+                pass
+
+        if (gain_type == "ltcg" and not is_long) or (gain_type == "stcg" and is_long):
+            continue
+
+        stock_info = stocks_info.get(sym, {})
+        stock_name = stock_info.get("Name", sym)
+
+        buy_avg = float(tx.get("BuyAvg", 0.0) or 0.0)
+        buy_val_inr = float(tx.get("BuyValue", 0) or (buy_avg * qty))
+        buy_val_usd = float(tx.get("BuyValueUSD", 0) or 0)
+
+        if use_usd:
+            invested = buy_val_usd if buy_val_usd > 0 else (buy_val_inr / usd_inr if usd_inr > 0 else buy_val_inr)
+        else:
+            invested = buy_val_inr
+
+        buy_price = invested / qty if qty > 0 else buy_avg
+
+        lp = float(live_map.get(sym, 0.0) or 0.0)
+        if lp <= 0:
+            lp = buy_price
+
+        curr_val = qty * lp
+        gain_loss = curr_val - invested
+        gain_pct = (gain_loss / invested * 100) if invested > 0 else 0.0
+
+        tx_rows.append({
+            "Portfolio": tx.get("Portfolio", "-"),
+            "Symbol": sym,
+            "Name": stock_name,
+            "Buy Date": buy_dt_display,
+            "Holding (Days)": holding_days,
+            "Qty": qty,
+            "Buy Avg": buy_price,
+            "Invested": invested,
+            "Live Price": lp,
+            "Current Value": curr_val,
+            "Gain / Loss": gain_loss,
+            "Gain / Loss %": gain_pct
+        })
+
+    return sorted(tx_rows, key=lambda x: x["Holding (Days)"], reverse=True)
+
+
 # Aggregate open transactions by (Portfolio, Symbol)
 tx_agg = {}   # (portfolio, symbol) -> {Qty, InvestedTotal, InvestedTotalUSD}
 for tx in open_tx:
@@ -495,8 +634,17 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     cg_dash = calculate_open_capital_gains(target_txs, live_map, currency_pairs_map, fx_rates, use_usd)
 
     cg_col1, cg_col2 = st.columns(2)
-    cg_col1.metric("⏱️ Short-Term Capital Gain (STCG ≤ 1 yr)", f"{currency_symbol}{cg_dash['stcg_gain']:,.2f}", delta=f"{cg_dash['stcg_pct']:+.2f}%")
-    cg_col2.metric("⏳ Long-Term Capital Gain (LTCG > 1 yr)", f"{currency_symbol}{cg_dash['ltcg_gain']:,.2f}", delta=f"{cg_dash['ltcg_pct']:+.2f}%")
+    with cg_col1:
+        st.metric("⏱️ Short-Term Capital Gain (STCG ≤ 1 yr)", f"{currency_symbol}{cg_dash['stcg_gain']:,.2f}", delta=f"{cg_dash['stcg_pct']:+.2f}%")
+        if st.button("📋 View STCG Transactions", key=f"btn_stcg_{port_label}", use_container_width=True):
+            stcg_txs = get_capital_gains_tx_details(target_txs, "stcg", live_map, stocks_map, currency_pairs_map, fx_rates, use_usd)
+            show_stcg_dialog(stcg_txs, currency_symbol, cg_dash['stcg_gain'], cg_dash['stcg_pct'])
+
+    with cg_col2:
+        st.metric("⏳ Long-Term Capital Gain (LTCG > 1 yr)", f"{currency_symbol}{cg_dash['ltcg_gain']:,.2f}", delta=f"{cg_dash['ltcg_pct']:+.2f}%")
+        if st.button("📋 View LTCG Transactions", key=f"btn_ltcg_{port_label}", use_container_width=True):
+            ltcg_txs = get_capital_gains_tx_details(target_txs, "ltcg", live_map, stocks_map, currency_pairs_map, fx_rates, use_usd)
+            show_ltcg_dialog(ltcg_txs, currency_symbol, cg_dash['ltcg_gain'], cg_dash['ltcg_pct'])
 
 
 
@@ -647,8 +795,8 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
     can_show_stock_bar = (port_expected_map is not None and "Portfolio" in df.columns) or total_expected > 0
     if not df.empty and can_show_stock_bar:
         st.divider()
-        st.subheader("Stock: Current Invested vs Expected")
-        stock_bar = df[["Name", "Invested", "Sector Alloc %", "Target Alloc %", "Portfolio"]].copy()
+        st.subheader("Stock: Current Invested vs Expected vs Current Value")
+        stock_bar = df[["Name", "Invested", "Current Value", "Sector Alloc %", "Target Alloc %", "Portfolio"]].copy()
 
         if port_expected_map is not None and "Portfolio" in df.columns:
             stock_bar["Expected"] = df.apply(
@@ -665,6 +813,11 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 * (stock_bar["Sector Alloc %"] / 100)
                 * (stock_bar["Target Alloc %"] / 100)
             )
+
+        if use_usd:
+            usd_inr = _usdinr()
+            if usd_inr > 0:
+                stock_bar["Expected"] = stock_bar["Expected"] / usd_inr
 
         stock_bar = stock_bar[stock_bar["Invested"] > 0].sort_values("Invested", ascending=False)
 
@@ -683,7 +836,15 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 x=stock_bar["Name"],
                 y=stock_bar["Expected"],
                 marker_color="#F58518",
-                text=stock_bar["Expected"].apply(lambda v: f"₹{v:,.0f}"),
+                text=stock_bar["Expected"].apply(lambda v: f"{currency_symbol}{v:,.0f}"),
+                textposition="outside"
+            ))
+            fig_s.add_trace(go.Bar(
+                name="Current Value",
+                x=stock_bar["Name"],
+                y=stock_bar["Current Value"],
+                marker_color="#54A24B",
+                text=stock_bar["Current Value"].apply(lambda v: f"{currency_symbol}{v:,.0f}"),
                 textposition="outside"
             ))
             fig_s.update_layout(
