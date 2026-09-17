@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
+import plotly.graph_objects as go
+import plotly.express as px
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Config.supabase_client import db
@@ -369,6 +371,53 @@ def show_merged_data_dialog():
     mc4.metric("🎯 Average PE", f"{avg_pe:.2f}")
 
     st.markdown("---")
+
+    # Pie Chart - Asset Wise Invested Amount Allocation (Full-Width Expanded View)
+    if not merged_df.empty and merged_df["Invested Amount"].sum() > 0:
+        pie_df = merged_df[merged_df["Invested Amount"] > 0].copy()
+        
+        st.subheader("🥧 Asset Allocation (Invested Amount)")
+        fig_pie_assets = go.Figure(go.Pie(
+            labels=pie_df["Name"].tolist(),
+            values=pie_df["Invested Amount"].tolist(),
+            hole=0.4,
+            marker_colors=px.colors.qualitative.Pastel,
+            textinfo="label+percent",
+            textposition="auto",
+            hovertemplate="<b>%{label}</b><br>Invested Amount: " + currency_symbol + "%{value:,.2f}<br>Allocation: %{percent}<extra></extra>"
+        ))
+        fig_pie_assets.update_layout(
+            showlegend=False,
+            margin=dict(t=30, b=30, l=20, r=20),
+            height=600,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="#E2E8F0")
+        )
+        st.plotly_chart(fig_pie_assets, use_container_width=True)
+
+        with st.expander("📊 View Sector Allocation Chart"):
+            sector_agg = pie_df.groupby("Sector")["Invested Amount"].sum().reset_index()
+            fig_pie_sector = go.Figure(go.Pie(
+                labels=sector_agg["Sector"].tolist(),
+                values=sector_agg["Invested Amount"].tolist(),
+                hole=0.4,
+                marker_colors=px.colors.qualitative.Set3,
+                textinfo="label+percent",
+                textposition="auto",
+                hovertemplate="<b>%{label}</b><br>Invested Amount: " + currency_symbol + "%{value:,.2f}<br>Allocation: %{percent}<extra></extra>"
+            ))
+            fig_pie_sector.update_layout(
+                showlegend=False,
+                margin=dict(t=30, b=30, l=20, r=20),
+                height=500,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#E2E8F0")
+            )
+            st.plotly_chart(fig_pie_sector, use_container_width=True)
+
+        st.markdown("---")
 
     merged_column_config = {
         "Symbol":          None,
