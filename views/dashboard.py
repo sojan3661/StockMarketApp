@@ -94,7 +94,6 @@ def get_index_pe(index_name):
         return 0.0
     try:
         symbol = "^NSEI" if index_name == "NIFTY 50" else "^NSEBANK"
-portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
         ticker = yf.Ticker(symbol)
         pe = ticker.info.get("trailingPE")
         if pe is not None:
@@ -107,6 +106,7 @@ portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
 
 
 plans_list      = db_plans if isinstance(db_plans, list) else ([db_plans] if db_plans else [])
+portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
 
 # Build fast lookups
 stocks_map = {s["Symbol"]: s for s in db_stocks}  # Symbol -> stock info
