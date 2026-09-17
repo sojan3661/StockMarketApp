@@ -29,6 +29,29 @@ def load_amfi_nav_data():
             df["isin2"] = df["isin2"].astype(str).str.strip()
             df["nav"] = pd.to_numeric(df["nav"], errors="coerce")
             df = df.dropna(subset=["nav"])
+
+            # Pre-build fast O(1) hash maps on df.attrs
+            scheme_code_map = {}
+            isin_map = {}
+            name_map = {}
+            for row in df.itertuples(index=False):
+                code = getattr(row, "scheme_code", "")
+                name = getattr(row, "scheme_name", "")
+                isin1 = getattr(row, "isin1", "")
+                isin2 = getattr(row, "isin2", "")
+                val = {"nav": getattr(row, "nav", 0.0), "date": getattr(row, "date", "")}
+                if code:
+                    scheme_code_map[code] = val
+                if isin1:
+                    isin_map[isin1.upper()] = val
+                if isin2:
+                    isin_map[isin2.upper()] = val
+                if name:
+                    name_map[name.lower()] = val
+
+            df.attrs["scheme_code_map"] = scheme_code_map
+            df.attrs["isin_map"]        = isin_map
+            df.attrs["name_map"]        = name_map
             return df
     except Exception:
         pass
@@ -116,20 +139,31 @@ def batch_fetch_stock_prices(stocks_list):
 def fetch_all_app_data():
     """
     Central function to load and cache ALL application data.
-    Cached for 1 hour or until st.cache_data.clear() is called.
+    Queries Supabase tables and AMFI NAV dataset concurrently using ThreadPoolExecutor.
     """
     if not db.is_configured():
         return {}
 
-    db_sectors           = db.fetch_sectors()
-    db_stocks            = db.fetch_stocks()
-    db_allocations       = db.fetch_allocations()
-    db_stock_allocations = db.fetch_stock_allocations()
-    open_transactions    = db.fetch_open_transactions()
-    all_transactions     = db.fetch_all_transactions()
-    db_investment_plan   = db.fetch_investment_plan()
-    db_currency_pairs    = db.fetch_currency_pairs()
-    nav_df               = load_amfi_nav_data()
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        f_sectors    = executor.submit(db.fetch_sectors)
+        f_stocks     = executor.submit(db.fetch_stocks)
+        f_allocs     = executor.submit(db.fetch_allocations)
+        f_stk_allocs = executor.submit(db.fetch_stock_allocations)
+        f_open_tx    = executor.submit(db.fetch_open_transactions)
+        f_all_tx     = executor.submit(db.fetch_all_transactions)
+        f_plan       = executor.submit(db.fetch_investment_plan)
+        f_curr_pairs = executor.submit(db.fetch_currency_pairs)
+        f_nav        = executor.submit(load_amfi_nav_data)
+
+        db_sectors           = f_sectors.result()
+        db_stocks            = f_stocks.result()
+        db_allocations       = f_allocs.result()
+        db_stock_allocations = f_stk_allocs.result()
+        open_transactions    = f_open_tx.result()
+        all_transactions     = f_all_tx.result()
+        db_investment_plan   = f_plan.result()
+        db_currency_pairs    = f_curr_pairs.result()
+        nav_df               = f_nav.result()
 
     # Pre-fetch live prices in parallel
     batch_fetch_stock_prices(db_stocks)
@@ -164,16 +198,32 @@ def refresh_all_data():
 def _find_nav_in_df(nav_df, fund_name, fallback_name=None):
     if nav_df is None or nav_df.empty:
         return None
+
+    scheme_map = nav_df.attrs.get("scheme_code_map") if hasattr(nav_df, "attrs") else None
+    isin_map   = nav_df.attrs.get("isin_map") if hasattr(nav_df, "attrs") else None
+    name_map   = nav_df.attrs.get("name_map") if hasattr(nav_df, "attrs") else None
+
     search_terms = []
     if fund_name:
         search_terms.append(str(fund_name).strip())
     if fallback_name and fallback_name != fund_name:
         search_terms.append(str(fallback_name).strip())
+
     for term_str in search_terms:
         if not term_str or term_str.upper() in ("NA", "NONE", ""):
             continue
-        term_lower = term_str.lower()
         term_upper = term_str.upper()
+        term_lower = term_str.lower()
+
+        # O(1) Hash Map Checks
+        if scheme_map and term_str in scheme_map:
+            return scheme_map[term_str]
+        if isin_map and term_upper in isin_map:
+            return isin_map[term_upper]
+        if name_map and term_lower in name_map:
+            return name_map[term_lower]
+
+        # Fallback to Pandas scan if hash maps aren't present
         if "scheme_code" in nav_df.columns:
             res = nav_df.loc[nav_df["scheme_code"].astype(str).str.strip() == term_str, ["nav", "date"]]
             if not res.empty:

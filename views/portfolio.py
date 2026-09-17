@@ -49,17 +49,27 @@ def fetch_fx_rate(pair_symbol):
     return 0.0
 
 
+FALLBACK_COUNTRY_FX = {
+    "USA": "USDINR=X", "US": "USDINR=X",
+    "UK": "GBPINR=X",  "GB": "GBPINR=X",
+    "EU": "EURINR=X",  "EUROPE": "EURINR=X",
+    "HK": "HKDINR=X",  "HONG KONG": "HKDINR=X",
+    "JP": "JPYINR=X",  "JAPAN": "JPYINR=X",
+    "AU": "AUDINR=X",  "AUSTRALIA": "AUDINR=X",
+    "CA": "CADINR=X",  "CANADA": "CADINR=X",
+    "CH": "CHFINR=X",  "SWITZERLAND": "CHFINR=X",
+}
+
 @st.cache_data(ttl=300)
-def build_fx_cache(cp_tuples):
-    """Pre-fetch all FX rates from CurrencyPair table symbols in parallel."""
+def build_fx_cache(symbols_tuple):
+    """Pre-fetch all FX rates in parallel."""
     rates = {}
-    symbols_to_fetch = list({sym for _country, sym in cp_tuples if sym})
-    if not symbols_to_fetch:
+    if not symbols_tuple:
         return rates
 
-    with ThreadPoolExecutor(max_workers=min(10, len(symbols_to_fetch))) as executor:
-        fetched_rates = list(executor.map(fetch_fx_rate, symbols_to_fetch))
-        for sym, rate in zip(symbols_to_fetch, fetched_rates):
+    with ThreadPoolExecutor(max_workers=min(10, len(symbols_tuple))) as executor:
+        fetched_rates = list(executor.map(fetch_fx_rate, symbols_tuple))
+        for sym, rate in zip(symbols_tuple, fetched_rates):
             rates[sym] = rate
     return rates
 
@@ -67,7 +77,7 @@ def build_fx_cache(cp_tuples):
 def _inr_per_unit(country, currency_pairs_map, fx_rates):
     """
     How many INR = 1 unit of country's base currency.
-    INDIA -> 1.0. Others -> CurrencyPair table, then built-in fallback.
+    INDIA -> 1.0. Reads directly from fx_rates cache.
     """
     country = (country or "INDIA").upper()
     if country == "INDIA":
@@ -82,19 +92,9 @@ def _inr_per_unit(country, currency_pairs_map, fx_rates):
             return rate
 
     # 2. Built-in country -> Yahoo FX symbol fallback
-    _country_to_fx = {
-        "USA": "USDINR=X", "US": "USDINR=X",
-        "UK": "GBPINR=X",  "GB": "GBPINR=X",
-        "EU": "EURINR=X",  "EUROPE": "EURINR=X",
-        "HK": "HKDINR=X",  "HONG KONG": "HKDINR=X",
-        "JP": "JPYINR=X",  "JAPAN": "JPYINR=X",
-        "AU": "AUDINR=X",  "AUSTRALIA": "AUDINR=X",
-        "CA": "CADINR=X",  "CANADA": "CADINR=X",
-        "CH": "CHFINR=X",  "SWITZERLAND": "CHFINR=X",
-    }
-    fallback_sym = _country_to_fx.get(country)
+    fallback_sym = FALLBACK_COUNTRY_FX.get(country)
     if fallback_sym:
-        rate = fetch_fx_rate(fallback_sym)
+        rate = fx_rates.get(fallback_sym) or fetch_fx_rate(fallback_sym)
         if rate and rate > 0:
             return rate
 
@@ -110,21 +110,10 @@ def _usdinr(currency_pairs_map, fx_rates):
             rate = fx_rates.get(cp["Symbol"], 0.0)
             if rate > 0:
                 return rate
-    return fetch_fx_rate("USDINR=X") or 84.0
+    return fx_rates.get("USDINR=X") or fetch_fx_rate("USDINR=X") or 84.0
 
 
-def convert_price(native_price, country, currency_pairs_map, fx_rates):
-    """
-    Convert native_price to display currency (INR or USD).
-
-    INR mode:
-      INDIA  -> as-is
-      Other  -> native × <BaseCurrency>INR
-
-    USD mode:
-      INDIA  -> native ÷ USDINR
-      Other  -> (native × <BaseCurrency>INR) ÷ USDINR
-    """
+def convert_price(native_price, country, currency_pairs_map, fx_rates, usd_inr_rate=None):
     use_usd = st.session_state.get("view_in_usd", False)
     country = (country or "INDIA").upper()
     try:
@@ -137,7 +126,7 @@ def convert_price(native_price, country, currency_pairs_map, fx_rates):
     if not use_usd:
         return inr_price
     else:
-        usd_inr = _usdinr(currency_pairs_map, fx_rates)
+        usd_inr = usd_inr_rate if (usd_inr_rate and usd_inr_rate > 0) else _usdinr(currency_pairs_map, fx_rates)
         if usd_inr <= 0:
             usd_inr = 84.0
         return inr_price / usd_inr
@@ -178,10 +167,14 @@ currency_pairs_map = {
     for cp in (db_currency_pairs if isinstance(db_currency_pairs, list) else [])
     if cp.get("Country")
 }
-_cp_tuples = tuple(sorted(
-    (c, cp.get("Symbol", "")) for c, cp in currency_pairs_map.items()
-))
-fx_rates = build_fx_cache(_cp_tuples)
+_fx_symbols_set = set()
+for cp in currency_pairs_map.values():
+    if cp.get("Symbol"):
+        _fx_symbols_set.add(cp["Symbol"])
+_fx_symbols_set.update(FALLBACK_COUNTRY_FX.values())
+_fx_symbols_set.add("USDINR=X")
+
+fx_rates = build_fx_cache(tuple(sorted(_fx_symbols_set)))
 
 # Stocks lookup
 stocks_map = {s["Symbol"]: s for s in db_stocks}
