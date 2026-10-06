@@ -5,6 +5,7 @@ import sys
 import os
 import openpyxl
 import time
+import pandas as pd
 
 # Add the app root directory to Python path to allow imports from Config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -204,7 +205,142 @@ def generate_transaction_template(portfolios, symbols) -> bytes:
     wb.save(buffer)
     return buffer.getvalue()
 
-col_dl, col_ul, _ = st.columns([1, 1, 2])
+@st.dialog("🔍 View Transactions", width="large")
+def view_transactions_dialog(stock_name_map, available_portfolios):
+    st.markdown("Filter and view recorded transactions by date range and type.")
+    
+    col_d, col_t, col_p = st.columns([2, 1.2, 1.5])
+    
+    today = datetime.date.today()
+    default_start = today - datetime.timedelta(days=30)
+    default_end = today
+    
+    with col_d:
+        date_range = st.date_input(
+            "Select Date Range",
+            value=(default_start, default_end),
+            key="vt_date_range",
+            help="Choose date range for transactions"
+        )
+        
+    with col_t:
+        tx_type_filter = st.selectbox(
+            "Transaction Type",
+            options=["All", "Buy", "Sell"],
+            index=0,
+            key="vt_tx_type"
+        )
+        
+    with col_p:
+        portfolio_filter = st.selectbox(
+            "Portfolio",
+            options=["All Portfolios"] + available_portfolios,
+            index=0,
+            key="vt_portfolio_filter"
+        )
+
+    # Safely extract start and end dates
+    if isinstance(date_range, (list, tuple)):
+        if len(date_range) == 2:
+            start_date, end_date = date_range[0], date_range[1]
+        elif len(date_range) == 1:
+            start_date = end_date = date_range[0]
+        else:
+            start_date, end_date = default_start, default_end
+    else:
+        start_date = end_date = date_range
+
+    # Fetch fresh transactions list from DB
+    try:
+        all_tx_data = db.fetch_all_transactions() if db.is_configured() else []
+    except Exception:
+        all_tx_data = []
+
+    tx_list = []
+    for tx in all_tx_data:
+        port = tx.get("Portfolio", "")
+        sym = tx.get("Symbol", "")
+        asset_name = stock_name_map.get(sym, sym)
+        qty = float(tx.get("Qty") or 0)
+        
+        if portfolio_filter != "All Portfolios" and port != portfolio_filter:
+            continue
+
+        # Check Buy Transaction
+        buy_date_str = tx.get("BuyDate")
+        if buy_date_str and tx_type_filter in ["All", "Buy"]:
+            try:
+                b_dt = pd.to_datetime(buy_date_str).date()
+                if start_date <= b_dt <= end_date:
+                    buy_avg = float(tx.get("BuyAvg") or 0)
+                    tx_list.append({
+                        "Date": b_dt,
+                        "Date_Display": b_dt.strftime("%d-%b-%Y"),
+                        "Type": "Buy",
+                        "Portfolio": port,
+                        "Symbol": sym,
+                        "Asset Name": asset_name,
+                        "Quantity": qty,
+                        "Price (₹)": buy_avg,
+                        "Total Value (₹)": qty * buy_avg
+                    })
+            except Exception:
+                pass
+
+        # Check Sell Transaction
+        sell_date_str = tx.get("SellDate")
+        sell_avg_val = tx.get("SellAvg")
+        if sell_date_str and sell_avg_val is not None and tx_type_filter in ["All", "Sell"]:
+            try:
+                s_dt = pd.to_datetime(sell_date_str).date()
+                if start_date <= s_dt <= end_date:
+                    sell_avg = float(sell_avg_val or 0)
+                    tx_list.append({
+                        "Date": s_dt,
+                        "Date_Display": s_dt.strftime("%d-%b-%Y"),
+                        "Type": "Sell",
+                        "Portfolio": port,
+                        "Symbol": sym,
+                        "Asset Name": asset_name,
+                        "Quantity": qty,
+                        "Price (₹)": sell_avg,
+                        "Total Value (₹)": qty * sell_avg
+                    })
+            except Exception:
+                pass
+
+    if tx_list:
+        tx_list.sort(key=lambda x: (x["Date"], x["Type"]), reverse=True)
+        df_tx = pd.DataFrame(tx_list)
+        
+        buy_count = sum(1 for item in tx_list if item["Type"] == "Buy")
+        sell_count = sum(1 for item in tx_list if item["Type"] == "Sell")
+        buy_total = sum(item["Total Value (₹)"] for item in tx_list if item["Type"] == "Buy")
+        sell_total = sum(item["Total Value (₹)"] for item in tx_list if item["Type"] == "Sell")
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Count", f"{len(tx_list)} ({buy_count} Buy, {sell_count} Sell)")
+        m2.metric("Total Buy Value", f"₹{buy_total:,.2f}")
+        m3.metric("Total Sell Value", f"₹{sell_total:,.2f}")
+        
+        st.divider()
+
+        df_display = df_tx[["Date_Display", "Type", "Portfolio", "Asset Name", "Symbol", "Quantity", "Price (₹)", "Total Value (₹)"]].rename(columns={"Date_Display": "Date"})
+
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Quantity": st.column_config.NumberColumn(format="%.4f"),
+                "Price (₹)": st.column_config.NumberColumn(format="₹%.2f"),
+                "Total Value (₹)": st.column_config.NumberColumn(format="₹%.2f"),
+            }
+        )
+    else:
+        st.info("ℹ️ No transactions found for the selected date range and criteria.")
+
+col_dl, col_ul, col_vt = st.columns([1, 1, 1])
 with col_dl:
     import base64
     b64_data = base64.b64encode(generate_transaction_template(available_portfolios, available_symbols)).decode()
@@ -217,6 +353,10 @@ with col_ul:
         type=["xlsx"],
         label_visibility="collapsed"
     )
+
+with col_vt:
+    if st.button("🔍 View Transactions", use_container_width=True):
+        view_transactions_dialog(stock_name_map, available_portfolios)
 
 # -----------------------------
 # Bulk Upload Processing
