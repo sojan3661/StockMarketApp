@@ -531,6 +531,16 @@ def show_overallocated_dialog(
         column_config=col_config
     )
 
+    csv_over = df_over.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Over-Allocated Assets as CSV",
+        data=csv_over,
+        file_name=f"over_allocated_assets_{selected_port.replace(' ', '_').lower()}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key="btn_download_overallocated"
+    )
+
 
 # Action Buttons
 col_btn1, col_btn2, col_btn3, _ = st.columns([1, 1.2, 1.4, 2.4])
@@ -648,7 +658,11 @@ for i, port_name in enumerate(portfolio_names):
                     key=f"input_{sip_months_key}"
                 )
 
-        show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
+        col_ctrl1, col_ctrl2 = st.columns([1.5, 1])
+        with col_ctrl1:
+            show_only_inflow = st.checkbox("Show only Inflow Instruments", key=f"show_inflow_{port_name}")
+        with col_ctrl2:
+            dl_placeholder = st.empty()
 
         total_inflow = 0
         total_sip    = 0
@@ -671,6 +685,7 @@ for i, port_name in enumerate(portfolio_names):
                 portfolio_expected_sum += total_expected * (tar_alloc / 100) * (alloc / 100)
 
         master_updates = []
+        port_rebalance_dfs = []
 
         for sector_row in db_sectors:
 
@@ -743,6 +758,9 @@ for i, port_name in enumerate(portfolio_names):
             # If show_only_inflow is active and no stock in this sector has inflow, hide the entire sector
             if show_only_inflow and display_df.empty:
                 if not df.empty:
+                    s_exp = df.copy()
+                    s_exp.insert(0, "Sector", sector_name)
+                    port_rebalance_dfs.append(s_exp)
                     updates = df[["Symbol", "Name", "Allocation %"]].rename(
                         columns={"Allocation %": "Allocation"}
                     )
@@ -764,6 +782,11 @@ for i, port_name in enumerate(portfolio_names):
                         st.warning(f"⚠ Allocation exceeds 100% ({sector_sum:.2f}%)")
                     else:
                         st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
+
+                    if not df.empty:
+                        s_exp = df.copy()
+                        s_exp.insert(0, "Sector", sector_name)
+                        port_rebalance_dfs.append(s_exp)
 
                     updates = df[["Symbol", "Name", "Allocation %"]].rename(
                         columns={"Allocation %": "Allocation"}
@@ -811,6 +834,10 @@ for i, port_name in enumerate(portfolio_names):
                 else:
                     st.caption(f"Sector total: {sector_sum:.2f}% / 100%")
 
+                s_exp = df.copy()
+                s_exp.insert(0, "Sector", sector_name)
+                port_rebalance_dfs.append(s_exp)
+
                 updates = df[["Symbol", "Name", "Allocation %"]].rename(
                     columns={"Allocation %": "Allocation"}
                 )
@@ -821,13 +848,65 @@ for i, port_name in enumerate(portfolio_names):
         inflow_metric_placeholder.metric("💵 Total Inflow",          f"₹{total_inflow:,.2f}")
         sip_total_placeholder.metric("📊 Total SIP",                f"₹{total_sip:,.2f}")
 
+        # Assemble full portfolio rebalancing DataFrame
+        if port_rebalance_dfs:
+            full_port_df = pd.concat(port_rebalance_dfs, ignore_index=True)
+            full_port_df.insert(0, "Portfolio", port_name)
+            full_port_df = full_port_df.rename(columns={"Name": "Asset Name"})
+
+            # Round numeric columns for clean CSV presentation
+            for col in ["LTP (INR)", "Invested", "Allocation %", "Project Allocation %", "Expected", "Inflow", "SIP"]:
+                if col in full_port_df.columns:
+                    full_port_df[col] = full_port_df[col].round(2)
+            if "Qty" in full_port_df.columns:
+                full_port_df["Qty"] = full_port_df["Qty"].round(4)
+        else:
+            full_port_df = pd.DataFrame()
+
+        if not full_port_df.empty:
+            inflow_port_df = full_port_df[full_port_df["Inflow"] > 0].reset_index(drop=True)
+
+            if show_only_inflow:
+                export_df = inflow_port_df
+                btn_label = f"📥 Download Inflow CSV ({len(inflow_port_df)} items)"
+                file_name = f"{port_name.replace(' ', '_')}_inflow_rebalancing.csv"
+            else:
+                export_df = full_port_df
+                btn_label = f"📥 Download Rebalancing CSV ({len(full_port_df)} items)"
+                file_name = f"{port_name.replace(' ', '_')}_rebalancing.csv"
+
+            csv_data = export_df.to_csv(index=False).encode('utf-8')
+
+            dl_placeholder.download_button(
+                label=btn_label,
+                data=csv_data,
+                file_name=file_name,
+                mime="text/csv",
+                use_container_width=True,
+                key=f"dl_top_{port_name}"
+            )
+
         st.divider()
-        submitted = st.button(
-            f"💾 Save {port_name} Asset Allocations",
-            type="primary",
-            use_container_width=True,
-            key=f"save_btn_{port_name}"
-        )
+        col_save, col_dl_bot = st.columns([1.5, 1])
+        with col_save:
+            submitted = st.button(
+                f"💾 Save {port_name} Asset Allocations",
+                type="primary",
+                use_container_width=True,
+                key=f"save_btn_{port_name}"
+            )
+
+        with col_dl_bot:
+            if not full_port_df.empty:
+                full_csv_data = full_port_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label=f"📥 Download {port_name} CSV",
+                    data=full_csv_data,
+                    file_name=f"{port_name.replace(' ', '_')}_rebalancing.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"dl_bottom_{port_name}"
+                )
 
         if submitted:
             with st.spinner("Saving allocations..."):
