@@ -155,6 +155,7 @@ from Config.data_cache import get_global_app_data, refresh_all_data, get_stock_i
 app_data = get_global_app_data()
 db_stocks             = app_data.get("stocks", [])
 open_transactions     = app_data.get("open_transactions", [])
+all_transactions      = app_data.get("all_transactions", [])
 db_stock_allocations  = app_data.get("stock_allocations", [])
 db_sector_allocations = app_data.get("allocations", [])
 db_investment_plan    = app_data.get("investment_plan", [])
@@ -567,7 +568,7 @@ def show_asset_details_dialog(selected_symbol, selected_name, selected_country, 
                             action_label = "🗑️ Delete Sell Details"
                             help_text    = "This will remove the sell date and sell rate."
 
-                        if st.button(action_label, type="primary", help=help_text, key=f"dlg_del_tx_{tx_id}_{port_name}"):
+                        if st.button(action_label, type="primary", help=help_text, key=f"dlg_del_tx_{tx_id}_{port_name}_{selected_symbol}"):
                             with st.spinner("Processing..."):
                                 if pd.isna(sell_date) or sell_date is None:
                                     success = db.delete_transaction(tx_id)
@@ -576,12 +577,12 @@ def show_asset_details_dialog(selected_symbol, selected_name, selected_country, 
 
                                 if success:
                                     st.success("Transaction updated successfully!")
-                                    st.rerun()
+                                    refresh_all_data()
 
                     with action_col2:
                         with st.expander("✏️ Edit Transaction"):
                             row_data = hist_df.iloc[selected_hist_index]
-                            with st.form(key=f"dlg_edit_form_{tx_id}_{port_name}"):
+                            with st.form(key=f"dlg_edit_form_{tx_id}_{port_name}_{selected_symbol}"):
                                 try:
                                     b_date_val = pd.to_datetime(row_data.get("BuyDate")).date()
                                 except Exception:
@@ -621,17 +622,20 @@ def show_asset_details_dialog(selected_symbol, selected_name, selected_country, 
                                     )
                                     if success:
                                         st.success("Transaction updated successfully!")
-                                        st.rerun()
+                                        refresh_all_data()
             else:
                 tx_ids = [hist_df.iloc[idx].get("id") for idx in selected_hist_rows if hist_df.iloc[idx].get("id") is not None]
                 if tx_ids:
                     st.write("")
-                    if st.button(f"🗑️ Delete Selected Transactions ({len(tx_ids)})", type="primary", key=f"dlg_del_multiple_{port_name}"):
+                    st.caption(f"**{len(tx_ids)}** transaction(s) selected.")
+                    if st.button(f"🗑️ Delete Selected Transactions ({len(tx_ids)})", type="primary", key=f"dlg_del_multiple_{port_name}_{selected_symbol}"):
                         with st.spinner("Deleting selected transactions..."):
                             success = db.delete_transactions(tx_ids)
                             if success:
-                                st.success("Selected transactions deleted successfully!")
-                                st.rerun()
+                                st.success(f"Selected {len(tx_ids)} transaction(s) deleted successfully!")
+                                refresh_all_data()
+                            else:
+                                st.error("Failed to delete selected transactions.")
 
 # Top Bar Action Buttons
 top_col1, top_col2, top_col3 = st.columns([3, 1, 1])
@@ -788,6 +792,7 @@ else:
                 tx_symbols  = {tx.get("Symbol") for tx in open_transactions}
                 port_stocks = [s for s in db_stocks if s.get("Symbol") in tx_symbols]
                 port_open_transactions = open_transactions
+                port_all_tx = all_transactions
             else:
                 port_stock_allocations = {
                     a["Symbol"]: a["Allocation"]
@@ -812,6 +817,10 @@ else:
                 port_open_transactions = [
                     tx for tx in open_transactions if tx.get("Portfolio") == port_name
                 ]
+                port_all_tx = [
+                    tx for tx in all_transactions
+                    if str(tx.get("Portfolio", "")).strip().lower() == port_name.strip().lower()
+                ]
 
             port_alloc_tuple = tuple(port_stock_allocations.items())
 
@@ -824,8 +833,131 @@ else:
             if not df.empty:
                 df = df[(df["Qty"] > 0) | (df["Invested Amount"] > 0) | (df["Current Value"] > 0)].reset_index(drop=True)
 
+            def render_transactions_view():
+                with st.container(border=True):
+                    st.subheader(f"🧾 Transactions ({len(port_all_tx)})")
+                    if not port_all_tx:
+                        st.info(f"No transactions found for {port_name}.")
+                        return
+
+                    tx_rows = []
+                    for tx in port_all_tx:
+                        sym = tx.get("Symbol", "")
+                        name = stocks_map.get(sym, {}).get("Name", sym) if sym else "-"
+                        country = (stocks_map.get(sym, {}).get("Country") or "INDIA").upper() if sym else "INDIA"
+                        qty = float(tx.get("Qty", 0.0) or 0.0)
+
+                        b_date = tx.get("BuyDate")
+                        b_date_str = pd.to_datetime(b_date).strftime("%d-%b-%Y") if b_date and not pd.isna(b_date) else "-"
+                        buy_avg = float(tx.get("BuyAvg", 0.0) or 0.0)
+                        buy_val = float(tx.get("BuyValue", 0.0) or (buy_avg * qty))
+
+                        s_date = tx.get("SellDate")
+                        s_date_str = pd.to_datetime(s_date).strftime("%d-%b-%Y") if s_date and not pd.isna(s_date) else "-"
+                        s_avg = float(tx.get("SellAvg", 0.0) or 0.0) if s_date and not pd.isna(s_date) else None
+                        s_val = float(tx.get("SellValue", 0.0) or ((s_avg or 0.0) * qty)) if s_date and not pd.isna(s_date) else None
+
+                        is_open = (
+                            (s_date is None or s_date == "" or (isinstance(s_date, float) and pd.isna(s_date))) and
+                            (tx.get("SellAvg") is None or tx.get("SellAvg") == "" or (isinstance(tx.get("SellAvg"), float) and pd.isna(tx.get("SellAvg"))))
+                        )
+
+                        if use_usd:
+                            disp_buy_price  = convert_price(buy_avg, country, currency_pairs_map, fx_rates)
+                            disp_buy_val    = float(tx.get("BuyValueUSD") or (disp_buy_price * qty))
+                            disp_sell_price = convert_price(s_avg, country, currency_pairs_map, fx_rates) if s_avg is not None else 0.0
+                            disp_sell_val   = float(tx.get("SellValueUSD") or (disp_sell_price * qty)) if s_val is not None else 0.0
+                        else:
+                            disp_buy_price  = buy_avg
+                            disp_buy_val    = buy_val
+                            disp_sell_price = s_avg if s_avg is not None else 0.0
+                            disp_sell_val   = s_val if s_val is not None else 0.0
+
+                        row_dict = {
+                            "id": tx.get("id"),
+                            "Buy Date": b_date_str,
+                            "Symbol": sym,
+                            "Name": name,
+                            "Quantity": qty,
+                            "Buy Price": disp_buy_price,
+                            "Buy Value": disp_buy_val,
+                            "Sell Date": s_date_str,
+                            "Sell Price": disp_sell_price,
+                            "Sell Value": disp_sell_val,
+                            "Status": "🟢 Open" if is_open else "🔴 Sold",
+                            "_sort_date": str(b_date or s_date or ""),
+                        }
+                        if port_name == "Overall Portfolio":
+                            row_dict["Portfolio"] = tx.get("Portfolio", "-")
+                        tx_rows.append(row_dict)
+
+                    tx_rows.sort(key=lambda r: r["_sort_date"], reverse=True)
+
+                    open_c = sum(1 for r in tx_rows if r["Status"] == "🟢 Open")
+                    sold_c = len(tx_rows) - open_c
+                    tot_bv = sum(r["Buy Value"] for r in tx_rows)
+
+                    tm1, tm2, tm3, tm4 = st.columns(4)
+                    tm1.metric("🧾 Total Transactions", len(tx_rows))
+                    tm2.metric("🟢 Open Positions", open_c)
+                    tm3.metric("🔴 Sold / Closed", sold_c)
+                    tm4.metric("💰 Total Buy Value", f"{currency_symbol}{tot_bv:,.2f}")
+
+                    df_tx_display = pd.DataFrame(tx_rows)
+                    drop_cols = ["id", "_sort_date"]
+                    visible_cols = [c for c in df_tx_display.columns if c not in drop_cols]
+
+                    tx_column_config = {
+                        "Quantity":   st.column_config.NumberColumn("Quantity",   format="%.4f"),
+                        "Buy Price":  st.column_config.NumberColumn("Buy Price",  format=money_fmt),
+                        "Buy Value":  st.column_config.NumberColumn("Buy Value",  format=money_fmt),
+                        "Sell Price": st.column_config.NumberColumn("Sell Price", format=money_fmt),
+                        "Sell Value": st.column_config.NumberColumn("Sell Value", format=money_fmt),
+                        "Status":     st.column_config.TextColumn("Status"),
+                    }
+
+                    event_tx = st.dataframe(
+                        df_tx_display[visible_cols],
+                        use_container_width=True,
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="multi-row",
+                        key=f"grid_transactions_{port_name}",
+                        column_config=tx_column_config
+                    )
+
+                    selected_tx_indices = event_tx.selection.rows if (event_tx and hasattr(event_tx, "selection")) else []
+                    if selected_tx_indices:
+                        selected_tx_ids = [
+                            df_tx_display.iloc[idx]["id"]
+                            for idx in selected_tx_indices
+                            if idx < len(df_tx_display) and df_tx_display.iloc[idx]["id"] is not None
+                        ]
+                        if selected_tx_ids:
+                            st.write("")
+                            col_del, col_info = st.columns([1, 2])
+                            with col_del:
+                                if st.button(
+                                    f"🗑️ Delete Selected Transactions ({len(selected_tx_ids)})",
+                                    type="primary",
+                                    key=f"btn_del_multi_{port_name}"
+                                ):
+                                    with st.spinner(f"Deleting {len(selected_tx_ids)} transaction(s)..."):
+                                        ok = db.delete_transactions(selected_tx_ids)
+                                    if ok:
+                                        st.success(f"✅ Successfully deleted {len(selected_tx_ids)} transaction(s)!")
+                                        refresh_all_data()
+                                    else:
+                                        st.error("Failed to delete selected transactions.")
+                            with col_info:
+                                st.caption(f"**{len(selected_tx_ids)}** transaction(s) selected for deletion.")
+
             if df.empty:
-                st.info(f"No assets with open value found for {port_name}.")
+                if port_all_tx:
+                    st.info(f"No open asset positions found for {port_name}.")
+                    render_transactions_view()
+                else:
+                    st.info(f"No assets or transactions found for {port_name}.")
                 continue
 
             import plotly.graph_objects as go
@@ -1023,31 +1155,37 @@ else:
             event_stocks = None
             event_mf     = None
 
-            if s_count > 0 and m_count > 0:
-                # Both Stocks & Mutual Funds present -> Show all 3 tabs
-                asset_tab_all, asset_tab_stocks, asset_tab_mf = st.tabs([
-                    f"🌐 All Assets ({all_count})",
-                    f"📈 Stocks ({s_count})",
-                    f"📊 Mutual Funds ({m_count})"
-                ])
-                with asset_tab_all:
-                    event_all = render_all_view()
-                with asset_tab_stocks:
-                    event_stocks = render_stocks_view()
-                with asset_tab_mf:
-                    event_mf = render_mf_view()
+            tab_labels = []
+            tab_renderers = []
 
-            elif s_count > 0:
-                # Only Stocks present -> Show only Stocks section (no tabs)
-                event_stocks = render_stocks_view()
+            if all_count > 0:
+                tab_labels.append(f"🌐 All Assets ({all_count})")
+                tab_renderers.append(("all", render_all_view))
 
-            elif m_count > 0:
-                # Only Mutual Funds present -> Show only Mutual Funds section (no tabs)
-                event_mf = render_mf_view()
+            if s_count > 0:
+                tab_labels.append(f"📈 Stocks ({s_count})")
+                tab_renderers.append(("stocks", render_stocks_view))
 
-            # ---- Order history ----
-            # Track active selection across the asset view tabs/section
-            last_sel_type_key    = f"last_selected_type_{port_name}"
+            if m_count > 0:
+                tab_labels.append(f"📊 Mutual Funds ({m_count})")
+                tab_renderers.append(("mf", render_mf_view))
+
+            tab_labels.append(f"🧾 Transactions ({len(port_all_tx)})")
+            tab_renderers.append(("tx", render_transactions_view))
+
+            sub_tabs = st.tabs(tab_labels)
+            for s_idx, (t_type, t_func) in enumerate(tab_renderers):
+                with sub_tabs[s_idx]:
+                    ev = t_func()
+                    if t_type == "all":
+                        event_all = ev
+                    elif t_type == "stocks":
+                        event_stocks = ev
+                    elif t_type == "mf":
+                        event_mf = ev
+
+            # ---- Asset Details Modal Trigger ----
+            # Only trigger popup when the user explicitly clicks a new row in an asset table
             prev_all_rows_key    = f"prev_all_rows_{port_name}"
             prev_stocks_rows_key = f"prev_stocks_rows_{port_name}"
             prev_mf_rows_key     = f"prev_mf_rows_{port_name}"
@@ -1060,31 +1198,20 @@ else:
             prev_stocks_rows = st.session_state.get(prev_stocks_rows_key, [])
             prev_mf_rows     = st.session_state.get(prev_mf_rows_key, [])
 
-            if all_rows != prev_all_rows:
-                st.session_state[last_sel_type_key]    = "all" if all_rows else None
-                st.session_state[prev_all_rows_key]    = all_rows
-            elif stocks_rows != prev_stocks_rows:
-                st.session_state[last_sel_type_key]    = "stocks" if stocks_rows else None
-                st.session_state[prev_stocks_rows_key] = stocks_rows
-            elif mf_rows != prev_mf_rows:
-                st.session_state[last_sel_type_key]    = "mf" if mf_rows else None
-                st.session_state[prev_mf_rows_key]     = mf_rows
-
             selected_asset_row = None
-            last_sel_type = st.session_state.get(last_sel_type_key)
 
-            if last_sel_type == "all" and all_rows and all_rows[0] < len(df):
-                selected_asset_row = df.iloc[all_rows[0]]
-            elif last_sel_type == "stocks" and stocks_rows and stocks_rows[0] < len(stocks_df):
-                selected_asset_row = stocks_df.iloc[stocks_rows[0]]
-            elif last_sel_type == "mf" and mf_rows and mf_rows[0] < len(mf_df):
-                selected_asset_row = mf_df.iloc[mf_rows[0]]
-            elif all_rows and all_rows[0] < len(df):
-                selected_asset_row = df.iloc[all_rows[0]]
-            elif stocks_rows and stocks_rows[0] < len(stocks_df):
-                selected_asset_row = stocks_df.iloc[stocks_rows[0]]
-            elif mf_rows and mf_rows[0] < len(mf_df):
-                selected_asset_row = mf_df.iloc[mf_rows[0]]
+            if all_rows != prev_all_rows:
+                st.session_state[prev_all_rows_key] = all_rows
+                if all_rows and all_rows[0] < len(df):
+                    selected_asset_row = df.iloc[all_rows[0]]
+            elif stocks_rows != prev_stocks_rows:
+                st.session_state[prev_stocks_rows_key] = stocks_rows
+                if stocks_rows and stocks_rows[0] < len(stocks_df):
+                    selected_asset_row = stocks_df.iloc[stocks_rows[0]]
+            elif mf_rows != prev_mf_rows:
+                st.session_state[prev_mf_rows_key] = mf_rows
+                if mf_rows and mf_rows[0] < len(mf_df):
+                    selected_asset_row = mf_df.iloc[mf_rows[0]]
 
             if selected_asset_row is not None:
                 selected_symbol  = selected_asset_row["Symbol"]

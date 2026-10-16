@@ -247,6 +247,113 @@ if st.session_state.get("show_setup_popup") and st.session_state.get("setup_port
     post_create_setup_dialog(p_name)
 
 
+# ---------------------------------------------------------
+# Helpers & Dialog for Portfolio Deletion
+# ---------------------------------------------------------
+def get_portfolio_open_transactions(portfolio_name, inv_amt=0.0):
+    """Returns list of open transactions belonging to this portfolio."""
+    p_name_clean = str(portfolio_name).strip().lower()
+    open_txs = [
+        tx for tx in (app_data.get("open_transactions") or [])
+        if str(tx.get("Portfolio", "")).strip().lower() == p_name_clean
+    ]
+
+    matched_ids = {tx.get("id") for tx in open_txs if tx.get("id") is not None}
+    for tx in (app_data.get("all_transactions") or []):
+        if str(tx.get("Portfolio", "")).strip().lower() == p_name_clean:
+            if tx.get("id") not in matched_ids:
+                s_avg = tx.get("SellAvg")
+                s_date = tx.get("SellDate")
+                is_open = (
+                    (s_avg is None or s_avg == "" or (isinstance(s_avg, float) and pd.isna(s_avg))) and
+                    (s_date is None or s_date == "" or (isinstance(s_date, float) and pd.isna(s_date)))
+                )
+                if is_open:
+                    open_txs.append(tx)
+                    if tx.get("id") is not None:
+                        matched_ids.add(tx.get("id"))
+
+    if not open_txs and inv_amt > 0:
+        try:
+            fresh_open = db.fetch_open_transactions(portfolio=portfolio_name)
+            for tx in (fresh_open or []):
+                if tx.get("id") not in matched_ids:
+                    open_txs.append(tx)
+                    if tx.get("id") is not None:
+                        matched_ids.add(tx.get("id"))
+        except Exception:
+            pass
+
+    return open_txs
+
+
+@st.dialog("Delete Portfolio", width="large")
+def delete_portfolio_dialog(port_name, open_txs, inv_amt):
+    has_open = bool(open_txs or (inv_amt and float(inv_amt) > 0))
+
+    if has_open:
+        count_str = f"{len(open_txs)} open transaction(s)" if open_txs else "active invested balance"
+        st.error("⚠️ **Open Transactions Detected**")
+        st.markdown(
+            f"Portfolio **{port_name}** currently has **{count_str}** with a total invested amount of **₹{float(inv_amt):,.2f}**.\n\n"
+            f"Deleting this portfolio requires your confirmation to proceed.\n\n"
+            f"⚠️ **If you proceed, all associated open transactions will be permanently deleted**, "
+            f"along with sector allocations, stock allocations, and the portfolio plan itself.\n\n"
+            f"**This action cannot be undone. Are you sure you want to proceed?**"
+        )
+
+        if open_txs:
+            st.markdown("##### Open Transactions to be Deleted:")
+            preview_data = []
+            for tx in open_txs:
+                qty = float(tx.get("Qty", 0.0) or 0.0)
+                buy_avg = float(tx.get("BuyAvg", 0.0) or 0.0)
+                buy_val = float(tx.get("BuyValue", 0.0) or (buy_avg * qty))
+                preview_data.append({
+                    "Symbol": tx.get("Symbol", "-"),
+                    "Quantity": qty,
+                    "Buy Date": str(tx.get("BuyDate") or "-"),
+                    "Buy Price": f"₹{buy_avg:,.2f}",
+                    "Invested Value": f"₹{buy_val:,.2f}"
+                })
+            st.dataframe(pd.DataFrame(preview_data), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            if st.button("🚨 Yes, Delete Portfolio & Open Transactions", type="primary", use_container_width=True, key=f"dlg_proceed_del_{port_name}"):
+                with st.spinner(f"Deleting '{port_name}' and all associated transactions..."):
+                    ok = db.delete_investment_plan(portfolio=port_name, force=True)
+                if ok:
+                    st.success(f"✅ Deleted portfolio '{port_name}' and all associated transactions successfully!")
+                    refresh_all_data()
+                else:
+                    st.error(f"Failed to delete portfolio '{port_name}'.")
+        with col_no:
+            if st.button("Cancel", use_container_width=True, key=f"dlg_cancel_{port_name}"):
+                st.rerun()
+    else:
+        st.warning(
+            f"Are you sure you want to delete portfolio **{port_name}**? "
+            f"This will delete all associated allocations and records. This action cannot be undone."
+        )
+        st.markdown("---")
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            if st.button("🗑️ Yes, Delete Portfolio", type="primary", use_container_width=True, key=f"dlg_simple_del_{port_name}"):
+                with st.spinner(f"Deleting '{port_name}'..."):
+                    ok = db.delete_investment_plan(portfolio=port_name, force=True)
+                if ok:
+                    st.success(f"✅ Deleted portfolio '{port_name}' successfully!")
+                    refresh_all_data()
+                else:
+                    st.error(f"Failed to delete portfolio '{port_name}'.")
+        with col_no:
+            if st.button("Cancel", use_container_width=True, key=f"dlg_cancel_simple_{port_name}"):
+                st.rerun()
+
+
 st.divider()
 
 # ---------------------------------------------------------
@@ -385,15 +492,30 @@ else:
             # --- DELETE TAB ---
             with tab_delete:
                 inv_amt = float(row.get("Current Invested Amount", 0) or 0.0)
-                if inv_amt > 0:
-                    st.warning(f"⚠️ Cannot delete plan **{port_id}** because its Current Invested Amount is ₹{inv_amt:,.2f} (> 0). Clear or withdraw investments first.")
-                    st.button(f"Delete {port_id}", type="primary", key=f"del_btn_{port_id}", disabled=True, help="Deletion is disabled when Current Invested Amount is greater than 0")
+                port_open_txs = get_portfolio_open_transactions(port_id, inv_amt)
+
+                tx_total_val = sum(
+                    float(tx.get("BuyValue") or (float(tx.get("BuyAvg", 0.0) or 0.0) * float(tx.get("Qty", 0.0) or 0.0)))
+                    for tx in port_open_txs
+                )
+                effective_inv = tx_total_val if tx_total_val > 0 else inv_amt
+                has_open = bool(port_open_txs or effective_inv > 0)
+
+                if has_open:
+                    count_text = f"**{len(port_open_txs)} open transaction(s)**" if port_open_txs else "active investments"
+                    st.warning(
+                        f"⚠️ Portfolio **{port_id}** currently has {count_text} "
+                        f"(Invested: ₹{effective_inv:,.2f}).\n\n"
+                        f"Deleting this portfolio requires confirmation to proceed. "
+                        f"If you proceed, all associated open transactions will be permanently deleted."
+                    )
+                    if st.button(f"🗑️ Delete {port_id}", type="primary", key=f"del_btn_{port_id}", help="Review open transactions and confirm deletion"):
+                        delete_portfolio_dialog(port_id, port_open_txs, effective_inv)
                 else:
-                    st.warning(f"Are you sure you want to delete the plan **{port_id}**? This will delete all associated transactions, sector allocations, and the dashboard plan. This action cannot be undone.")
-                    
+                    st.warning(
+                        f"Are you sure you want to delete the plan **{port_id}**? "
+                        f"This will delete all associated transactions, sector allocations, and the dashboard plan. "
+                        f"This action cannot be undone."
+                    )
                     if st.button(f"Delete {port_id}", type="primary", key=f"del_btn_{port_id}"):
-                        if db.delete_investment_plan(portfolio=port_id):
-                            st.success(f"Deleted {port_id} successfully!")
-                            refresh_data()
-                        else:
-                            st.error(f"Failed to delete {port_id}.")
+                        delete_portfolio_dialog(port_id, [], 0.0)
