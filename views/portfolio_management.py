@@ -205,6 +205,13 @@ stock_country_map = {
     if s.get("Symbol")
 }
 
+# Build stock name lookup: symbol -> name
+stock_name_map = {
+    s["Symbol"]: (s.get("Name") or s["Symbol"])
+    for s in (raw_stocks or db_stocks)
+    if s.get("Symbol")
+}
+
 # -----------------------------
 # Aggregate Transactions
 # -----------------------------
@@ -242,7 +249,7 @@ if not portfolio_names:
 # Swap Portfolio Dialog
 # -----------------------------
 @st.dialog("Swap Portfolio", width="large")
-def show_swap_portfolio_dialog(portfolio_names, open_transactions):
+def show_swap_portfolio_dialog(portfolio_names, open_transactions, stock_name_map=stock_name_map):
     st.caption("Transfer open transactions of a specific asset from one portfolio to another.")
 
     top_col1, top_col2, top_col3, top_col4 = st.columns([1, 1, 1, 1])
@@ -258,7 +265,10 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
     # Compute dependent options
     if from_port != "-- Select Portfolio --":
         from_txs = [tx for tx in (open_transactions or []) if tx.get("Portfolio") == from_port]
-        asset_symbols = sorted(list({tx.get("Symbol") for tx in from_txs if tx.get("Symbol")}))
+        asset_symbols = sorted(
+            list({tx.get("Symbol") for tx in from_txs if tx.get("Symbol")}),
+            key=lambda sym: (stock_name_map.get(sym, sym) if stock_name_map else sym).lower()
+        )
         to_port_options = [p for p in portfolio_names if p != from_port]
     else:
         from_txs = []
@@ -270,6 +280,7 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
         selected_asset = st.selectbox(
             "Select Asset",
             options=["-- Select Asset --"] + asset_symbols,
+            format_func=lambda sym: "-- Select Asset --" if sym == "-- Select Asset --" else (stock_name_map.get(sym, sym) if stock_name_map else sym),
             key="swap_asset"
         )
 
@@ -306,18 +317,18 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
         return
 
     asset_txs = [tx for tx in from_txs if tx.get("Symbol") == selected_asset]
+    asset_display_name = (stock_name_map.get(selected_asset, selected_asset) if stock_name_map else selected_asset)
     if not asset_txs:
-        st.warning(f"No open transactions found for '{selected_asset}' in portfolio '{from_port}'.")
+        st.warning(f"No open transactions found for '{asset_display_name}' in portfolio '{from_port}'.")
         return
 
-    st.markdown(f"**Open Transactions for `{selected_asset}` in `{from_port}` ({len(asset_txs)} transaction(s)):**")
+    st.markdown(f"**Open Transactions for `{asset_display_name}` in `{from_port}` ({len(asset_txs)} transaction(s)):**")
 
     # Build DataFrame for selection table
     tx_rows = []
     for tx in asset_txs:
         sym_code = tx.get("Symbol")
-        stock_match = next((s for s in db_stocks if s.get("Symbol") == sym_code), {})
-        asset_name = stock_match.get("Name") or sym_code
+        asset_name = (stock_name_map.get(sym_code, sym_code) if stock_name_map else sym_code)
         tx_rows.append({
             "Select": False,
             "ID": tx.get("id"),
@@ -370,7 +381,7 @@ def show_swap_portfolio_dialog(portfolio_names, open_transactions):
             success = db.update_transactions_portfolio(target_tx_ids, to_port)
 
         if success:
-            st.success(f"🎉 Successfully moved {len(target_tx_ids)} transaction(s) of '{selected_asset}' from '{from_port}' to '{to_port}'!")
+            st.success(f"🎉 Successfully moved {len(target_tx_ids)} transaction(s) of '{asset_display_name}' from '{from_port}' to '{to_port}'!")
             st.cache_data.clear()
             st.rerun()
         else:
@@ -550,7 +561,7 @@ with col_btn1:
 
 with col_btn2:
     if st.button("🔀 Swap Portfolio", help="Move open transactions of an asset between portfolios"):
-        show_swap_portfolio_dialog(portfolio_names, open_transactions)
+        show_swap_portfolio_dialog(portfolio_names, open_transactions, stock_name_map)
 
 with col_btn3:
     if st.button("⚖️ Show OverAllocated", help="View over-allocated assets and quantity to sell"):

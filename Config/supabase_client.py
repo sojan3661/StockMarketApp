@@ -1217,8 +1217,8 @@ class SupabaseClient:
 
         return True, f"Successfully renamed portfolio from '{old_name}' to '{new_name}'."
 
-    def delete_investment_plan(self, portfolio, force=False):
-        """Deletes an investment plan and its associated transactions and allocations if Current Invested Amount is 0."""
+    def delete_investment_plan(self, portfolio, force=True):
+        """Deletes an investment plan and its associated transactions and allocations."""
         headers = self._get_headers()
         if not headers:
             return False
@@ -1226,7 +1226,7 @@ class SupabaseClient:
         from urllib.parse import quote
         safe_port = quote(str(portfolio).strip(), safe="")
         
-        # Check current invested amount unless force=True
+        # Check current invested amount only if force=False
         plan_endpoint = f"{self.url}/rest/v1/Investment%20Plan?Portfolio=eq.{safe_port}"
         if not force:
             try:
