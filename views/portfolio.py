@@ -369,11 +369,12 @@ def show_merged_data_dialog():
     # Pie Chart - Asset Wise Invested Amount Allocation (Full-Width Expanded View)
     if not merged_df.empty and merged_df["Invested Amount"].sum() > 0:
         pie_df = merged_df[merged_df["Invested Amount"] > 0].copy()
+        pie_asset_agg = pie_df.groupby("Name", as_index=False)["Invested Amount"].sum()
         
         st.subheader("🥧 Asset Allocation (Invested Amount)")
         fig_pie_assets = go.Figure(go.Pie(
-            labels=pie_df["Name"].tolist(),
-            values=pie_df["Invested Amount"].tolist(),
+            labels=pie_asset_agg["Name"].tolist(),
+            values=pie_asset_agg["Invested Amount"].tolist(),
             hole=0.4,
             marker_colors=px.colors.qualitative.Pastel,
             textinfo="label+percent",
@@ -388,7 +389,7 @@ def show_merged_data_dialog():
             plot_bgcolor='rgba(0,0,0,0)',
             font=dict(color="#E2E8F0")
         )
-        st.plotly_chart(fig_pie_assets, use_container_width=True)
+        st.plotly_chart(fig_pie_assets, use_container_width=True, key="merged_pie_assets_chart")
 
         with st.expander("📊 View Sector Allocation Chart"):
             sector_agg = pie_df.groupby("Sector")["Invested Amount"].sum().reset_index()
@@ -409,7 +410,7 @@ def show_merged_data_dialog():
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color="#E2E8F0")
             )
-            st.plotly_chart(fig_pie_sector, use_container_width=True)
+            st.plotly_chart(fig_pie_sector, use_container_width=True, key="merged_pie_sector_chart")
 
         st.markdown("---")
 
@@ -519,7 +520,7 @@ def show_asset_details_dialog(selected_symbol, selected_name, selected_country, 
                 xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)"),
                 yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)", tickformat=",.2f")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"dlg_trend_chart_{port_name}_{selected_symbol}")
         else:
             st.info("No open buy transactions available for price trend chart.")
 
@@ -790,7 +791,13 @@ else:
                 port_sector_allocations = {}
                 symbol_to_sector = {s.get("Symbol"): s.get("Sector") for s in db_stocks if s.get("Symbol")}
                 tx_symbols  = {tx.get("Symbol") for tx in open_transactions}
-                port_stocks = [s for s in db_stocks if s.get("Symbol") in tx_symbols]
+                seen_syms = set()
+                port_stocks = []
+                for s in db_stocks:
+                    sym = s.get("Symbol")
+                    if sym in tx_symbols and sym not in seen_syms:
+                        seen_syms.add(sym)
+                        port_stocks.append(s)
                 port_open_transactions = open_transactions
                 port_all_tx = all_transactions
             else:
@@ -813,7 +820,13 @@ else:
                 tx_symbols    = {tx.get("Symbol") for tx in open_transactions if tx.get("Portfolio") == port_name}
                 valid_symbols = tx_symbols
 
-                port_stocks = [s for s in db_stocks if s.get("Symbol") in valid_symbols]
+                seen_syms = set()
+                port_stocks = []
+                for s in db_stocks:
+                    sym = s.get("Symbol")
+                    if sym in valid_symbols and sym not in seen_syms:
+                        seen_syms.add(sym)
+                        port_stocks.append(s)
                 port_open_transactions = [
                     tx for tx in open_transactions if tx.get("Portfolio") == port_name
                 ]
@@ -970,9 +983,10 @@ else:
                 if not df.empty and df["Invested Amount"].sum() > 0:
                     st.subheader("Current Asset Allocation")
                     pie_df = df[df["Invested Amount"] > 0]
+                    pie_grouped = pie_df.groupby("Name", as_index=False)["Invested Amount"].sum()
                     fig_pie = go.Figure(go.Pie(
-                        labels=pie_df["Name"].tolist(),
-                        values=pie_df["Invested Amount"].tolist(),
+                        labels=pie_grouped["Name"].tolist(),
+                        values=pie_grouped["Invested Amount"].tolist(),
                         hole=0.4,
                         marker_colors=px.colors.qualitative.Pastel,
                         textinfo="label+percent",
@@ -986,7 +1000,7 @@ else:
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(color="#E2E8F0")
                     )
-                    st.plotly_chart(fig_pie, use_container_width=True)
+                    st.plotly_chart(fig_pie, use_container_width=True, key=f"portfolio_current_pie_{port_name}_{i}")
 
             with pie_col2:
                 proj_data = []
@@ -1001,9 +1015,10 @@ else:
                 if proj_data:
                     st.subheader("Projected Target Allocation")
                     proj_df = pd.DataFrame(proj_data)
+                    proj_grouped = proj_df.groupby("Name", as_index=False)["Projected %"].sum()
                     fig_proj = go.Figure(go.Pie(
-                        labels=proj_df["Name"].tolist(),
-                        values=proj_df["Projected %"].tolist(),
+                        labels=proj_grouped["Name"].tolist(),
+                        values=proj_grouped["Projected %"].tolist(),
                         marker_colors=px.colors.qualitative.Pastel,
                         textinfo="label+percent",
                         textposition="inside",
@@ -1016,7 +1031,7 @@ else:
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(color="#E2E8F0")
                     )
-                    st.plotly_chart(fig_proj, use_container_width=True)
+                    st.plotly_chart(fig_proj, use_container_width=True, key=f"portfolio_proj_pie_{port_name}_{i}")
 
             st.divider()
 
