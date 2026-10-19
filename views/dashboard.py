@@ -553,7 +553,7 @@ def render_investment_bar(bar_df):
             xaxis=dict(gridcolor="#2D333B"),
             yaxis=dict(gridcolor="#2D333B")
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="dashboard_overall_bar_chart")
 
     else:
         # Pie chart mode: show portfolio allocation
@@ -587,7 +587,7 @@ def render_investment_bar(bar_df):
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color="#E2E8F0")
             )
-            st.plotly_chart(fig_p, use_container_width=True)
+            st.plotly_chart(fig_p, use_container_width=True, key="dashboard_overall_pie_chart")
 
 
 def sector_invested_df(port_name=None):
@@ -752,7 +752,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color="#E2E8F0")
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"dashboard_sector_pie_{port_label}")
 
         # ── Level 2: Stock Pie Drilldown ─────────────────────────────────────
         else:
@@ -785,7 +785,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                     plot_bgcolor='rgba(0,0,0,0)',
                     font=dict(color="#E2E8F0")
                 )
-                st.plotly_chart(fig_d, use_container_width=True)
+                st.plotly_chart(fig_d, use_container_width=True, key=f"dashboard_stock_pie_{port_label}")
 
                 # Per-stock metrics
                 total = sector_stocks["Invested"].sum()
@@ -880,7 +880,7 @@ def render_summary_and_pie(df, sector_df, port_label, bar_df=None, metric_expect
                 xaxis=dict(gridcolor="#2D333B"),
                 yaxis=dict(gridcolor="#2D333B")
             )
-            st.plotly_chart(fig_s, use_container_width=True)
+            st.plotly_chart(fig_s, use_container_width=True, key=f"dashboard_stock_bar_{port_label}")
 
 
 # -----------------------------------------------
