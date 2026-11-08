@@ -1128,7 +1128,7 @@ class SupabaseClient:
             st.error(f"Error fetching investment plans: {e}")
             return []
 
-    def upsert_investment_plan(self, portfolio, current_invested, monthly_sip, num_months, description, platform=None, target=None):
+    def upsert_investment_plan(self, portfolio, current_invested, monthly_sip, num_months, description, platform=None, target=None, related_portfolio=None, target_percentage=None):
         """Upserts an investment plan. Primary key is Portfolio."""
         headers = self._get_headers()
         if not headers:
@@ -1144,12 +1144,19 @@ class SupabaseClient:
             "Number of Months": num_months,
             "Description": description,
             "Platform": platform,
-            "Target": target
+            "Target": target,
+            "RelatedPortfolio": related_portfolio,
+            "TargetPercentage": target_percentage
         }
         
         try:
             response = requests.post(endpoint, headers=headers, json=data)
             response.raise_for_status()
+
+            # If target is specified, cascade update any portfolios depending on this portfolio
+            if target is not None:
+                self.update_dependent_portfolio_targets(portfolio, target)
+
             return True
         except requests.exceptions.HTTPError as e:
             if response.status_code == 401 or response.status_code == 403:
@@ -1161,11 +1168,35 @@ class SupabaseClient:
             st.error(f"Error saving investment plan: {e}")
             return False
 
-    def update_portfolio_name(self, old_name, new_name, current_invested, monthly_sip, num_months, description, platform=None, target=None):
+    def update_dependent_portfolio_targets(self, parent_portfolio, parent_target):
+        """Updates Target of all portfolios that have RelatedPortfolio == parent_portfolio."""
+        headers = self._get_headers()
+        if not headers or parent_target is None:
+            return
+        from urllib.parse import quote
+        safe_parent = quote(str(parent_portfolio).strip(), safe="")
+        endpoint = f"{self.url}/rest/v1/Investment%20Plan?RelatedPortfolio=eq.{safe_parent}&select=Portfolio,TargetPercentage"
+        try:
+            resp = requests.get(endpoint, headers=headers)
+            resp.raise_for_status()
+            dependents = resp.json()
+            if isinstance(dependents, list) and dependents:
+                for dep in dependents:
+                    dep_name = dep.get("Portfolio")
+                    pct = dep.get("TargetPercentage")
+                    if dep_name and pct is not None:
+                        calc_target = round(float(parent_target) * (float(pct) / 100.0), 2)
+                        safe_dep = quote(str(dep_name).strip(), safe="")
+                        patch_endpoint = f"{self.url}/rest/v1/Investment%20Plan?Portfolio=eq.{safe_dep}"
+                        requests.patch(patch_endpoint, headers=headers, json={"Target": calc_target})
+        except Exception:
+            pass
+
+    def update_portfolio_name(self, old_name, new_name, current_invested, monthly_sip, num_months, description, platform=None, target=None, related_portfolio=None, target_percentage=None):
         """
         Renames a portfolio by:
         1. Creating a new investment plan record
-        2. Updating SectorAllocation, StockAllocation, and Transactions records
+        2. Updating SectorAllocation, StockAllocation, Transactions, and dependent Investment Plans
         3. Deleting the old investment plan record
         Returns (success_bool, message).
         """
@@ -1181,7 +1212,9 @@ class SupabaseClient:
             num_months=num_months,
             description=description,
             platform=platform,
-            target=target
+            target=target,
+            related_portfolio=related_portfolio,
+            target_percentage=target_percentage
         )
         if not insert_success:
             return False, f"Failed to create new investment plan '{new_name}'"
@@ -1210,7 +1243,14 @@ class SupabaseClient:
         except Exception as e:
             st.error(f"Error migrating Transactions: {e}")
 
-        # 5. Delete the old investment plan
+        # 5. Update RelatedPortfolio for portfolios that depend on the old portfolio name
+        rel_endpoint = f"{self.url}/rest/v1/Investment%20Plan?RelatedPortfolio=eq.{safe_old}"
+        try:
+            requests.patch(rel_endpoint, headers=headers, json={"RelatedPortfolio": new_name})
+        except Exception as e:
+            st.error(f"Error migrating RelatedPortfolio: {e}")
+
+        # 6. Delete the old investment plan
         delete_success = self.delete_investment_plan(old_name, force=True)
         if not delete_success:
             return True, f"Portfolio renamed to {new_name}, but failed to delete old record '{old_name}'."
@@ -1240,6 +1280,13 @@ class SupabaseClient:
                         return False
             except Exception as e:
                 st.warning(f"Could not verify invested amount before deletion: {e}")
+
+        # Clear RelatedPortfolio where any other portfolio depended on this portfolio
+        rel_endpoint = f"{self.url}/rest/v1/Investment%20Plan?RelatedPortfolio=eq.{safe_port}"
+        try:
+            requests.patch(rel_endpoint, headers=headers, json={"RelatedPortfolio": None, "TargetPercentage": None})
+        except Exception:
+            pass
 
         # 1. Delete associated Transactions
         tx_endpoint = f"{self.url}/rest/v1/Transactions?Portfolio=eq.{safe_port}"
