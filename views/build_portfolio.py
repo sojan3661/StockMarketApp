@@ -31,13 +31,32 @@ app_data = get_global_app_data()
 plans = app_data.get("investment_plan", [])
     
 # Convert to DataFrame for easier handling
-# Convert to DataFrame for easier handling
 if plans:
     plans_df = pd.DataFrame(plans)
 else:
     plans_df = pd.DataFrame(columns=[
-        "Portfolio", "Current Invested Amount", "Monthly SIP", "Number of Months", "Description", "Platform", "Target"
+        "Portfolio", "Current Invested Amount", "Monthly SIP", "Number of Months", "Description", "Platform", "Target", "RelatedPortfolio", "TargetPercentage"
     ])
+
+if "RelatedPortfolio" not in plans_df.columns:
+    plans_df["RelatedPortfolio"] = None
+if "TargetPercentage" not in plans_df.columns:
+    plans_df["TargetPercentage"] = None
+
+# Build mapping of existing portfolio plans for easy dependency lookup
+plans_map = {}
+existing_portfolio_names = []
+if not plans_df.empty and "Portfolio" in plans_df.columns:
+    for _, p_row in plans_df.iterrows():
+        p_name = str(p_row.get("Portfolio", "")).strip()
+        if p_name:
+            existing_portfolio_names.append(p_name)
+            p_target = float(p_row.get("Target") or 0.0) if pd.notna(p_row.get("Target")) else 0.0
+            plans_map[p_name] = {
+                "Target": p_target,
+                "RelatedPortfolio": p_row.get("RelatedPortfolio") if pd.notna(p_row.get("RelatedPortfolio")) else None,
+                "TargetPercentage": float(p_row.get("TargetPercentage") or 0.0) if pd.notna(p_row.get("TargetPercentage")) else None,
+            }
 
 
 st.divider()
@@ -47,44 +66,121 @@ st.divider()
 # ---------------------------------------------------------
 st.subheader("Add New Investment Plan")
 
-with st.form("add_new_plan_form", clear_on_submit=True):
+with st.container():
     new_portfolio = st.text_input(
         "Portfolio Name*", 
+        key="new_plan_portfolio_name",
         help="Must be a unique name. e.g., 'Retirement', 'Child College Fund'."
     )
     
+    new_has_dep = st.checkbox(
+        "Portfolio has dependency on another portfolio?",
+        value=False,
+        key="new_plan_has_dep",
+        help="Check this if this portfolio's target depends on an existing portfolio."
+    )
+    
+    new_related_port = None
+    new_target_pct = None
+    calc_target = 0.0
+    
+    if new_has_dep:
+        if not existing_portfolio_names:
+            st.info("ℹ️ No existing portfolios available to depend on. Please create a standalone portfolio first.")
+            new_has_dep = False
+        else:
+            dep_col1, dep_col2 = st.columns(2)
+            with dep_col1:
+                new_related_port = st.selectbox(
+                    "Related Portfolio*",
+                    options=existing_portfolio_names,
+                    key="new_plan_related_port",
+                    help="Select the existing portfolio this portfolio depends on."
+                )
+            with dep_col2:
+                new_target_pct = st.number_input(
+                    "Target Percentage (%)*",
+                    min_value=0.0,
+                    step=0.5,
+                    value=float(st.session_state.get("new_plan_target_pct", 10.0)),
+                    key="new_plan_target_pct",
+                    help="Percentage of the related portfolio's target."
+                )
+                
+            rel_target = plans_map.get(new_related_port, {}).get("Target", 0.0)
+            calc_target = round(rel_target * (new_target_pct / 100.0), 2)
+            st.session_state["new_plan_target_val"] = calc_target
+            
+            if rel_target > 0:
+                st.caption(f"💡 Target auto-populated: **₹{calc_target:,.2f}** ({new_target_pct:.2f}% of **{new_related_port}**'s target ₹{rel_target:,.2f})")
+            else:
+                st.warning(f"⚠️ Selected portfolio **{new_related_port}** has a target of ₹0.00. The calculated target is ₹0.00.")
+
     col1, col2 = st.columns(2)
     with col1:
-        new_invested = st.number_input("Current Invested Amount", min_value=0.0, step=0.01, value=0.0)
-        new_sip = st.number_input("Monthly SIP", min_value=0.0, step=0.01, value=0.0, help="Monthly SIP amount for the next n months")
-        new_target = st.number_input("Target Amount", min_value=0.0, step=0.01, value=0.0, help="Total amount targeted for this portfolio")
-    with col2:
-        new_months = st.number_input("Number of Months", min_value=0, step=1, value=0)
-        new_desc = st.text_input("Description", placeholder="Optional notes about this portfolio")
-        new_platform = st.text_input("Platform", placeholder="Optional platform name")
+        new_invested = st.number_input("Current Invested Amount", min_value=0.0, step=0.01, value=0.0, key="new_plan_invested")
+        new_sip = st.number_input("Monthly SIP", min_value=0.0, step=0.01, value=0.0, help="Monthly SIP amount for the next n months", key="new_plan_sip")
         
-    add_submitted = st.form_submit_button("Create New Plan", type="primary")
+        if new_has_dep and existing_portfolio_names:
+            new_target = st.number_input(
+                "Target Amount",
+                value=float(st.session_state.get("new_plan_target_val", 0.0)),
+                disabled=True,
+                key="new_plan_target_val",
+                help="Auto-calculated from related portfolio target (not editable when dependency is enabled)."
+            )
+        else:
+            new_target = st.number_input(
+                "Target Amount",
+                min_value=0.0,
+                step=0.01,
+                value=float(st.session_state.get("new_plan_target_val", 0.0)),
+                disabled=False,
+                key="new_plan_target_val",
+                help="Total amount targeted for this portfolio"
+            )
+    with col2:
+        new_months = st.number_input("Number of Months", min_value=0, step=1, value=0, key="new_plan_months")
+        new_desc = st.text_input("Description", placeholder="Optional notes about this portfolio", key="new_plan_desc")
+        new_platform = st.text_input("Platform", placeholder="Optional platform name", key="new_plan_platform")
+        
+    add_submitted = st.button("Create New Plan", type="primary", key="btn_create_new_plan")
     
     if add_submitted:
-        if not new_portfolio.strip():
+        name_clean = new_portfolio.strip()
+        if not name_clean:
             st.error("Portfolio Name is required.")
-        elif not plans_df.empty and (new_portfolio.strip().lower() in plans_df["Portfolio"].str.lower().values):
-            st.error(f"A portfolio named '{new_portfolio}' already exists. Please choose a different name.")
+        elif not plans_df.empty and (name_clean.lower() in plans_df["Portfolio"].str.lower().values):
+            st.error(f"A portfolio named '{name_clean}' already exists. Please choose a different name.")
         else:
+            final_target = calc_target if (new_has_dep and existing_portfolio_names) else (new_target if new_target > 0 else None)
+            final_rel_port = new_related_port if (new_has_dep and existing_portfolio_names) else None
+            final_target_pct = new_target_pct if (new_has_dep and existing_portfolio_names) else None
+            
             success = db.upsert_investment_plan(
-                portfolio=new_portfolio.strip(),
+                portfolio=name_clean,
                 current_invested=new_invested,
                 monthly_sip=new_sip if new_sip > 0 else None,
                 num_months=new_months if new_months > 0 else None,
                 description=new_desc.strip() if new_desc else None,
                 platform=new_platform.strip() if new_platform else None,
-                target=new_target if new_target > 0 else None
+                target=final_target,
+                related_portfolio=final_rel_port,
+                target_percentage=final_target_pct
             )
             if success:
                 st.session_state["show_setup_popup"] = True
-                st.session_state["setup_portfolio_name"] = new_portfolio.strip()
+                st.session_state["setup_portfolio_name"] = name_clean
                 st.session_state["setup_step"] = 1
-                st.cache_data.clear()
+                # Clean up add form keys from session_state
+                for k in [
+                    "new_plan_portfolio_name", "new_plan_has_dep", "new_plan_related_port",
+                    "new_plan_target_pct", "new_plan_target_val", "new_plan_invested",
+                    "new_plan_sip", "new_plan_months", "new_plan_desc", "new_plan_platform"
+                ]:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                refresh_all_data()
                 st.rerun()
             else:
                 st.error("Failed to create new investment plan.")
@@ -377,6 +473,13 @@ else:
         target_amt = float(row.get('Target') or 0.0) if pd.notna(row.get('Target')) else 0.0
         target_html = f'<span style="background-color: #8B5CF620; color: #A78BFA; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Target: ₹{target_amt:,.2f}</span>' if target_amt > 0 else ""
         
+        rel_port_badge = row.get("RelatedPortfolio")
+        pct_badge = row.get("TargetPercentage")
+        dep_html = ""
+        if pd.notna(rel_port_badge) and str(rel_port_badge).strip():
+            pct_str = f" ({float(pct_badge):g}%)" if pd.notna(pct_badge) and pct_badge is not None else ""
+            dep_html = f'<span style="background-color: #EC489920; color: #F472B6; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Depends on: {str(rel_port_badge).strip()}{pct_str}</span>'
+            
         platform = row.get("Platform")
         platform_html = f'<span style="background-color: #F59E0B20; color: #FBBF24; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Platform: {platform}</span>' if pd.notna(platform) and platform else ""
         
@@ -387,6 +490,7 @@ else:
                 f'<span style="background-color: #3B82F620; color: #60A5FA; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Invested: ₹{inv_amt:,.2f}</span>'
                 f'<span style="background-color: #10B98120; color: #34D399; padding: 4px 10px; border-radius: 6px; font-weight: 600;">Expected: ₹{expected_investment:,.2f}</span>'
                 f'{target_html}'
+                f'{dep_html}'
                 f'{platform_html}'
                 f'</div>'
             )
@@ -396,7 +500,7 @@ else:
             
             # --- EDIT TAB ---
             with tab_edit:
-                with st.form(f"edit_plan_form_{port_id}"):
+                with st.container():
                     edit_portfolio_name = st.text_input(
                         "Portfolio Name*",
                         value=port_id,
@@ -404,6 +508,72 @@ else:
                         help="Change the name of this portfolio. This will update it in all transactions and allocations."
                     )
                     
+                    # Dependency Checkbox
+                    existing_rel_port = str(row.get("RelatedPortfolio") or "").strip() if pd.notna(row.get("RelatedPortfolio")) else ""
+                    has_dep_init = bool(existing_rel_port)
+                    
+                    edit_has_dep = st.checkbox(
+                        "Portfolio has dependency on another portfolio?",
+                        value=has_dep_init,
+                        key=f"edit_has_dep_{port_id}",
+                        help="Check this if this portfolio's target depends on an existing portfolio."
+                    )
+                    
+                    # Exclude itself and any portfolio that already depends on this portfolio to avoid circular dependencies
+                    cycle_ports = {
+                        str(p_r.get("Portfolio")).strip()
+                        for _, p_r in plans_df.iterrows()
+                        if pd.notna(p_r.get("RelatedPortfolio")) and str(p_r.get("RelatedPortfolio")).strip().lower() == str(port_id).lower()
+                    }
+                    selectable_ports = [
+                        p for p in existing_portfolio_names
+                        if p.lower() != str(port_id).lower() and p not in cycle_ports
+                    ]
+                    if existing_rel_port and existing_rel_port in existing_portfolio_names and existing_rel_port not in selectable_ports:
+                        selectable_ports.append(existing_rel_port)
+                        
+                    edit_related_port = None
+                    edit_target_pct = None
+                    edit_calc_target = 0.0
+                    
+                    if edit_has_dep:
+                        if not selectable_ports:
+                            st.info("ℹ️ No eligible portfolios available to depend on.")
+                            edit_has_dep = False
+                        else:
+                            rel_idx = 0
+                            if existing_rel_port in selectable_ports:
+                                rel_idx = selectable_ports.index(existing_rel_port)
+                                
+                            dep_ec1, dep_ec2 = st.columns(2)
+                            with dep_ec1:
+                                edit_related_port = st.selectbox(
+                                    "Related Portfolio*",
+                                    options=selectable_ports,
+                                    index=rel_idx,
+                                    key=f"edit_rel_port_{port_id}",
+                                    help="Select the portfolio this portfolio depends on."
+                                )
+                            with dep_ec2:
+                                default_pct = float(row.get("TargetPercentage") or 10.0) if pd.notna(row.get("TargetPercentage")) else 10.0
+                                edit_target_pct = st.number_input(
+                                    "Target Percentage (%)*",
+                                    min_value=0.0,
+                                    step=0.5,
+                                    value=default_pct,
+                                    key=f"edit_pct_{port_id}",
+                                    help="Percentage of the related portfolio's target."
+                                )
+                                
+                            rel_target_val = plans_map.get(edit_related_port, {}).get("Target", 0.0)
+                            edit_calc_target = round(rel_target_val * (edit_target_pct / 100.0), 2)
+                            st.session_state[f"edit_target_{port_id}"] = edit_calc_target
+                            
+                            if rel_target_val > 0:
+                                st.caption(f"💡 Target auto-populated: **₹{edit_calc_target:,.2f}** ({edit_target_pct:.2f}% of **{edit_related_port}**'s target ₹{rel_target_val:,.2f})")
+                            else:
+                                st.warning(f"⚠️ Selected portfolio **{edit_related_port}** has a target of ₹0.00. The calculated target is ₹0.00.")
+
                     ec1, ec2 = st.columns(2)
                     with ec1:
                         edit_invested = st.number_input(
@@ -421,14 +591,27 @@ else:
                             key=f"edit_sip_{port_id}",
                             help="Monthly SIP amount for the next n months"
                         )
-                        edit_target = st.number_input(
-                            "Target Amount",
-                            value=float(row.get("Target") or 0.0) if pd.notna(row.get("Target")) else 0.0,
-                            min_value=0.0,
-                            step=0.01,
-                            key=f"edit_target_{port_id}",
-                            help="Total amount targeted for this portfolio"
-                        )
+                        if edit_has_dep and selectable_ports:
+                            edit_target = st.number_input(
+                                "Target Amount",
+                                value=float(st.session_state.get(f"edit_target_{port_id}", edit_calc_target)),
+                                min_value=0.0,
+                                step=0.01,
+                                disabled=True,
+                                key=f"edit_target_{port_id}",
+                                help="Auto-calculated from related portfolio target (not editable when dependency is enabled)."
+                            )
+                        else:
+                            if f"edit_target_{port_id}" not in st.session_state:
+                                st.session_state[f"edit_target_{port_id}"] = float(row.get("Target") or 0.0) if pd.notna(row.get("Target")) else 0.0
+                            edit_target = st.number_input(
+                                "Target Amount",
+                                min_value=0.0,
+                                step=0.01,
+                                disabled=False,
+                                key=f"edit_target_{port_id}",
+                                help="Total amount targeted for this portfolio"
+                            )
                     with ec2:
                         edit_months = st.number_input(
                             "Number of Months",
@@ -448,7 +631,7 @@ else:
                             key=f"edit_plat_{port_id}"
                         )
                     
-                    edit_submitted = st.form_submit_button("Update Plan")
+                    edit_submitted = st.button("Update Plan", type="primary", key=f"btn_edit_submit_{port_id}")
                     
                     if edit_submitted:
                         new_name_clean = edit_portfolio_name.strip()
@@ -457,6 +640,10 @@ else:
                         elif new_name_clean.lower() != port_id.lower() and not plans_df.empty and (new_name_clean.lower() in plans_df["Portfolio"].str.lower().values):
                             st.error(f"A portfolio named '{new_name_clean}' already exists. Please choose a different name.")
                         else:
+                            final_target = edit_calc_target if (edit_has_dep and selectable_ports) else (edit_target if edit_target > 0 else None)
+                            final_rel_port = edit_related_port if (edit_has_dep and selectable_ports) else None
+                            final_target_pct = edit_target_pct if (edit_has_dep and selectable_ports) else None
+                            
                             if new_name_clean != port_id:
                                 success, msg = db.update_portfolio_name(
                                     old_name=port_id,
@@ -466,10 +653,13 @@ else:
                                     num_months=edit_months if edit_months > 0 else None,
                                     description=edit_desc if edit_desc else None,
                                     platform=edit_platform if edit_platform else None,
-                                    target=edit_target if edit_target > 0 else None
+                                    target=final_target,
+                                    related_portfolio=final_rel_port,
+                                    target_percentage=final_target_pct
                                 )
                                 if success:
                                     st.success(msg)
+                                    refresh_all_data()
                                     refresh_data()
                                 else:
                                     st.error(msg)
@@ -481,10 +671,13 @@ else:
                                     num_months=edit_months if edit_months > 0 else None,
                                     description=edit_desc if edit_desc else None,
                                     platform=edit_platform if edit_platform else None,
-                                    target=edit_target if edit_target > 0 else None
+                                    target=final_target,
+                                    related_portfolio=final_rel_port,
+                                    target_percentage=final_target_pct
                                 )
                                 if success:
                                     st.success(f"Updated {port_id} successfully!")
+                                    refresh_all_data()
                                     refresh_data()
                                 else:
                                     st.error(f"Failed to update {port_id}.")
