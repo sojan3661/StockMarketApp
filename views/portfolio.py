@@ -184,6 +184,43 @@ plans_list      = db_investment_plan if isinstance(db_investment_plan, list) els
 portfolio_names = [p["Portfolio"] for p in plans_list if "Portfolio" in p]
 
 # -----------------------------------------------
+# Allocation helpers
+# -----------------------------------------------
+def _get_market_cap(stock_record):
+    """Return normalized MarketCap string for a stock/MF record, defaulting to 'NA'."""
+    val = (stock_record or {}).get("MarketCap")
+    val_str = str(val).strip() if val is not None and not pd.isna(val) else ""
+    return val_str if val_str else "NA"
+
+
+def _build_allocation_pie(grouped_df, label_col, value_col, *, hole=0.4, height=600,
+                          textposition="auto", margin=None, colors=None, hovertemplate=None):
+    """Build a styled Plotly Pie figure for allocation charts."""
+    pie_kwargs = dict(
+        labels=grouped_df[label_col].tolist(),
+        values=grouped_df[value_col].tolist(),
+        marker_colors=colors or px.colors.qualitative.Pastel,
+        textinfo="label+percent",
+        textposition=textposition,
+    )
+    if hole:
+        pie_kwargs["hole"] = hole
+    if hovertemplate:
+        pie_kwargs["hovertemplate"] = hovertemplate
+
+    fig = go.Figure(go.Pie(**pie_kwargs))
+    fig.update_layout(
+        showlegend=False,
+        margin=margin or dict(t=20, b=20, l=0, r=0),
+        height=height,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color="#E2E8F0")
+    )
+    return fig
+
+
+# -----------------------------------------------
 # Merged Data Dialog
 # -----------------------------------------------
 @st.dialog("📊 Merged Portfolio Data", width="large")
@@ -328,6 +365,7 @@ def show_merged_data_dialog():
             "Asset Type":      asset_type,
             "Listing":         "Listed" if is_listed else "Unlisted",
             "Country":         country,
+            "Market Cap":      _get_market_cap(p),
             "PE Ratio":        pe_ratio,
             "Qty":             qty,
             "Invested Amount": invested_amt,
@@ -366,49 +404,54 @@ def show_merged_data_dialog():
 
     st.markdown("---")
 
-    # Pie Chart - Asset Wise Invested Amount Allocation (Full-Width Expanded View)
+    # Pie Chart - Asset Wise / Market Cap Wise Invested Amount Allocation (Full-Width Expanded View)
     if not merged_df.empty and merged_df["Invested Amount"].sum() > 0:
         pie_df = merged_df[merged_df["Invested Amount"] > 0].copy()
-        pie_asset_agg = pie_df.groupby("Name", as_index=False)["Invested Amount"].sum()
-        
-        st.subheader("🥧 Asset Allocation (Invested Amount)")
-        fig_pie_assets = go.Figure(go.Pie(
-            labels=pie_asset_agg["Name"].tolist(),
-            values=pie_asset_agg["Invested Amount"].tolist(),
+
+        alloc_title_col, alloc_toggle_col = st.columns([3, 1])
+        with alloc_toggle_col:
+            st.markdown("<div style='margin-top: 6px;'></div>", unsafe_allow_html=True)
+            view_by_mcap = st.toggle(
+                "By Market Cap",
+                value=False,
+                key="merged_allocation_mcap_toggle",
+                help="Toggle between Asset-wise and Market Cap-wise allocation",
+            )
+
+        alloc_group_col = "Market Cap" if view_by_mcap else "Name"
+        pie_asset_agg = pie_df.groupby(alloc_group_col, as_index=False)["Invested Amount"].sum()
+
+        with alloc_title_col:
+            if view_by_mcap:
+                st.subheader("🥧 Market Cap Allocation (Invested Amount)")
+            else:
+                st.subheader("🥧 Asset Allocation (Invested Amount)")
+
+        fig_pie_assets = _build_allocation_pie(
+            pie_asset_agg,
+            label_col=alloc_group_col,
+            value_col="Invested Amount",
             hole=0.4,
-            marker_colors=px.colors.qualitative.Pastel,
-            textinfo="label+percent",
-            textposition="auto",
-            hovertemplate="<b>%{label}</b><br>Invested Amount: " + currency_symbol + "%{value:,.2f}<br>Allocation: %{percent}<extra></extra>"
-        ))
-        fig_pie_assets.update_layout(
-            showlegend=False,
-            margin=dict(t=30, b=30, l=20, r=20),
             height=600,
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color="#E2E8F0")
+            textposition="auto",
+            margin=dict(t=30, b=30, l=20, r=20),
+            colors=px.colors.qualitative.Pastel,
+            hovertemplate="<b>%{label}</b><br>Invested Amount: " + currency_symbol + "%{value:,.2f}<br>Allocation: %{percent}<extra></extra>",
         )
         st.plotly_chart(fig_pie_assets, use_container_width=True, key="merged_pie_assets_chart")
 
         with st.expander("📊 View Sector Allocation Chart"):
             sector_agg = pie_df.groupby("Sector")["Invested Amount"].sum().reset_index()
-            fig_pie_sector = go.Figure(go.Pie(
-                labels=sector_agg["Sector"].tolist(),
-                values=sector_agg["Invested Amount"].tolist(),
+            fig_pie_sector = _build_allocation_pie(
+                sector_agg,
+                label_col="Sector",
+                value_col="Invested Amount",
                 hole=0.4,
-                marker_colors=px.colors.qualitative.Set3,
-                textinfo="label+percent",
-                textposition="auto",
-                hovertemplate="<b>%{label}</b><br>Invested Amount: " + currency_symbol + "%{value:,.2f}<br>Allocation: %{percent}<extra></extra>"
-            ))
-            fig_pie_sector.update_layout(
-                showlegend=False,
-                margin=dict(t=30, b=30, l=20, r=20),
                 height=500,
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="#E2E8F0")
+                textposition="auto",
+                margin=dict(t=30, b=30, l=20, r=20),
+                colors=px.colors.qualitative.Set3,
+                hovertemplate="<b>%{label}</b><br>Invested Amount: " + currency_symbol + "%{value:,.2f}<br>Allocation: %{percent}<extra></extra>",
             )
             st.plotly_chart(fig_pie_sector, use_container_width=True, key="merged_pie_sector_chart")
 
@@ -417,6 +460,7 @@ def show_merged_data_dialog():
     merged_column_config = {
         "Symbol":          None,
         "Country":         None,
+        "Market Cap":      None,
         "Asset Type":      st.column_config.TextColumn("Asset Type"),
         "PE Ratio":        st.column_config.NumberColumn("PE \nRatio",              format="%.2f"),
         "Qty":             st.column_config.NumberColumn("Current \nQty",            format="%.4f"),
@@ -744,6 +788,7 @@ def get_portfolio_display_data(port_stocks, port_open_transactions, nav_df,
             "Asset Type":      "Stock" if is_equity else "Mutual Fund",
             "Listing":         "Listed" if is_listed else "Unlisted",
             "Country":         country,
+            "Market Cap":      _get_market_cap(p),
             "PE Ratio":        pe_ratio,
             "Qty":             qty,
             "Invested Amount": invested_amt,
@@ -757,7 +802,7 @@ def get_portfolio_display_data(port_stocks, port_open_transactions, nav_df,
 
     if not display_data:
         return pd.DataFrame(columns=[
-            "Sector", "Symbol", "Name", "Asset Type", "Listing", "Country", "PE Ratio",
+            "Sector", "Symbol", "Name", "Asset Type", "Listing", "Country", "Market Cap", "PE Ratio",
             "Qty", "Invested Amount", "% of Allocation", "Avg Buy",
             "Live Price", "Current Value", "Running P&L", "Running P&L %"
         ])
@@ -973,63 +1018,65 @@ else:
                     st.info(f"No assets or transactions found for {port_name}.")
                 continue
 
-            import plotly.graph_objects as go
-            import plotly.express as px
-
             # ---- Pie charts ----
+            proj_data = []
+            for sym, alloc in port_stock_allocations.items():
+                sector    = symbol_to_sector.get(sym)
+                sec_alloc = port_sector_allocations.get(sector, 0)
+                proj_pct  = (alloc * sec_alloc) / 100
+                if proj_pct > 0:
+                    stock_rec = stocks_map.get(sym, {})
+                    name      = stock_rec.get("Name") or sym
+                    proj_data.append({
+                        "Name": name,
+                        "Market Cap": _get_market_cap(stock_rec),
+                        "Projected %": proj_pct,
+                    })
+
+            has_current_alloc = not df.empty and df["Invested Amount"].sum() > 0
+            view_tab_mcap = False
+            if has_current_alloc or proj_data:
+                view_tab_mcap = st.toggle(
+                    "View Allocation by Market Cap",
+                    value=False,
+                    key=f"portfolio_mcap_toggle_{port_name}_{i}",
+                    help="Toggle between Asset-wise and Market Cap-wise allocation",
+                )
+
+            tab_group_col = "Market Cap" if view_tab_mcap else "Name"
             pie_col1, pie_col2 = st.columns(2)
 
             with pie_col1:
-                if not df.empty and df["Invested Amount"].sum() > 0:
-                    st.subheader("Current Asset Allocation")
+                if has_current_alloc:
+                    st.subheader("Current Market Cap Allocation" if view_tab_mcap else "Current Asset Allocation")
                     pie_df = df[df["Invested Amount"] > 0]
-                    pie_grouped = pie_df.groupby("Name", as_index=False)["Invested Amount"].sum()
-                    fig_pie = go.Figure(go.Pie(
-                        labels=pie_grouped["Name"].tolist(),
-                        values=pie_grouped["Invested Amount"].tolist(),
+                    pie_grouped = pie_df.groupby(tab_group_col, as_index=False)["Invested Amount"].sum()
+                    fig_pie = _build_allocation_pie(
+                        pie_grouped,
+                        label_col=tab_group_col,
+                        value_col="Invested Amount",
                         hole=0.4,
-                        marker_colors=px.colors.qualitative.Pastel,
-                        textinfo="label+percent",
-                        textposition="inside",
-                    ))
-                    fig_pie.update_layout(
-                        showlegend=False,
-                        margin=dict(t=20, b=20, l=0, r=0),
                         height=650,
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        font=dict(color="#E2E8F0")
+                        textposition="inside",
+                        margin=dict(t=20, b=20, l=0, r=0),
+                        colors=px.colors.qualitative.Pastel,
                     )
                     st.plotly_chart(fig_pie, use_container_width=True, key=f"portfolio_current_pie_{port_name}_{i}")
 
             with pie_col2:
-                proj_data = []
-                for sym, alloc in port_stock_allocations.items():
-                    sector   = symbol_to_sector.get(sym)
-                    sec_alloc= port_sector_allocations.get(sector, 0)
-                    proj_pct = (alloc * sec_alloc) / 100
-                    if proj_pct > 0:
-                        name = next((s.get("Name") for s in db_stocks if s.get("Symbol") == sym), sym)
-                        proj_data.append({"Name": name, "Projected %": proj_pct})
-
                 if proj_data:
-                    st.subheader("Projected Target Allocation")
+                    st.subheader("Projected Market Cap Allocation" if view_tab_mcap else "Projected Target Allocation")
                     proj_df = pd.DataFrame(proj_data)
-                    proj_grouped = proj_df.groupby("Name", as_index=False)["Projected %"].sum()
-                    fig_proj = go.Figure(go.Pie(
-                        labels=proj_grouped["Name"].tolist(),
-                        values=proj_grouped["Projected %"].tolist(),
-                        marker_colors=px.colors.qualitative.Pastel,
-                        textinfo="label+percent",
-                        textposition="inside",
-                    ))
-                    fig_proj.update_layout(
-                        showlegend=False,
-                        margin=dict(t=20, b=20, l=0, r=0),
+                    proj_grouped = proj_df.groupby(tab_group_col, as_index=False)["Projected %"].sum()
+                    fig_proj = _build_allocation_pie(
+                        proj_grouped,
+                        label_col=tab_group_col,
+                        value_col="Projected %",
+                        hole=0,
                         height=650,
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        font=dict(color="#E2E8F0")
+                        textposition="inside",
+                        margin=dict(t=20, b=20, l=0, r=0),
+                        colors=px.colors.qualitative.Pastel,
                     )
                     st.plotly_chart(fig_proj, use_container_width=True, key=f"portfolio_proj_pie_{port_name}_{i}")
 
@@ -1056,6 +1103,7 @@ else:
                 "Symbol":          None,
                 "Asset Type":      None,
                 "Country":         None,
+                "Market Cap":      None,
                 "PE Ratio":        st.column_config.NumberColumn("PE \nRatio",              format="%.2f"),
                 "Qty":             st.column_config.NumberColumn("Current \nQty",            format="%.4f"),
                 "Invested Amount": st.column_config.NumberColumn("Current \nInvested Amount",format=money_fmt),
